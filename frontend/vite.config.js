@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -24,7 +25,16 @@ export default defineConfig(({ mode }) => {
     server: { proxy },
     // Mêmes navigateurs qu'avec Vite 7 : Vite 8 relève sa cible par défaut (Safari 16.4, Chrome 111),
     // et la famille ouvre souvent l'arbre sur un vieil iPad ou un ancien téléphone
-    build: { target: ['chrome107', 'edge107', 'firefox104', 'safari16'] },
+    build: {
+      target: ['chrome107', 'edge107', 'firefox104', 'safari16'],
+      // Two pages: the app, and the Russian guide served under /help/ (sharing the app's fonts)
+      rolldownOptions: {
+        input: {
+          main: fileURLToPath(new URL('./index.html', import.meta.url)),
+          help: fileURLToPath(new URL('./help/index.html', import.meta.url)),
+        },
+      },
+    },
     test: {
       environment: 'node',
       include: ['src/**/*.test.{js,jsx}'],

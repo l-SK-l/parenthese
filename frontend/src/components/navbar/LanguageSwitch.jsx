@@ -2,12 +2,12 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { ChevronUp } from 'lucide-react'
 import { LOCALES, locale, setLocale, t } from '../../i18n/index.js'
 
-// Noms des langues écrits dans leur propre langue : ils ne se traduisent pas.
+// Language names written in their own language: they are not translated.
 const NATIVE_NAMES = { fr: 'Français', en: 'English', ru: 'Русский' }
 
 /**
- * Choix de la langue : un seul bouton à la langue courante (« RU »), qui déplie les autres
- * au-dessus de lui. Changer de langue recharge la page (voir i18n/index.js).
+ * Language choice: a single button showing the current language ("RU") that unfolds the others
+ * above it. Switching language reloads the page (see i18n/index.js).
  */
 function LanguageSwitch({ className = '' }) {
   const [open, setOpen] = useState(false)
@@ -22,7 +22,7 @@ function LanguageSwitch({ className = '' }) {
     }
     const onKeyDown = (event) => {
       if (event.key !== 'Escape') return
-      // Ferme la liste seulement, pas le menu qui la contient
+      // Close the list only, not the menu around it
       event.stopPropagation()
       setOpen(false)
       buttonRef.current?.focus()

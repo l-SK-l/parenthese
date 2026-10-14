@@ -1,7 +1,7 @@
 name: CI
 
-# Tests, lint et builds des trois projets, plus une installation Docker complète testée comme un
-# auto-hébergeur. La publication des images sur Docker Hub (images.yml) attend la réussite de ce workflow.
+# Tests, lint and builds of the three projects, plus a full Docker installation tested like a
+# self-hoster would. Publishing the images to Docker Hub (images.yml) waits for this workflow to pass.
 on:
   push:
     branches:
@@ -167,7 +167,7 @@ jobs:
             fi
           }
           # Valeurs hexadécimales : sans caractère spécial, sûres dans l'URL de connexion PostgreSQL.
-          # Images construites ici depuis les sources, jamais poussées : un espace de noms local suffit.
+          # Images built here from source and never pushed: a local namespace is enough.
           set_env IMAGE_NAMESPACE ci
           set_env POSTGRES_PASSWORD "$(openssl rand -hex 24)"
           set_env JWT_SECRET "$(openssl rand -hex 48)"

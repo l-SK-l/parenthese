@@ -1,8 +1,8 @@
-// Traductions russes, clé = texte français exact passé à t().
-// Lot « photos » : premiers visages après un import, photos retrouvées, import dès la création de l'arbre.
-// « фото » ne se décline pas : seules les phrases sur les personnes et les portraits ont un pluriel.
+// Russian translations, key = the exact French text passed to t().
+// "photos" batch: first faces after an import, recovered photos, import when the tree is created.
+// "фото" does not decline: only the sentences about people and portraits need plural forms.
 export default {
-  // Fenêtre des premiers visages (PhotoStartPanel)
+  // First faces window (PhotoStartPanel)
   "Import terminé": "Импорт завершён",
   "Il manque les <em>visages</em>": "Не хватает <em>лиц</em>",
   "{n} personnes sont dans votre arbre. Avec une photo, la famille se reconnaît tout de suite.": {
@@ -43,14 +43,14 @@ export default {
   "Voir l'arbre": "Смотреть древо",
   "Session expirée, reconnectez-vous.": "Сессия истекла, войдите снова.",
 
-  // Portrait vide sur l'arbre, au survol
+  // Empty portrait on the tree, on hover
   "photo": "фото",
 
-  // Paramètres de l'arbre
+  // Tree settings
   "Ajouter des portraits": "Добавить портреты",
   "Retrouver les photos de votre ancien logiciel, ou ajouter les premiers visages un par un.": "Найдите фото из прежней программы или добавьте первые лица по одному.",
 
-  // Création de l'arbre, « J'ai déjà un arbre »
+  // Tree creation, "I already have a tree"
   "Point de départ": "С чего начать",
   "Je pars de moi": "Начать с себя",
   "J'ai déjà un arbre": "У меня уже есть древо",

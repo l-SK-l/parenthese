@@ -1,13 +1,13 @@
 name: Images
 
-# Publie les images Docker de l'API et du front sur Docker Hub, pour un auto-hébergement sans le code
-# source : docker-compose.yml + .env suffisent. Mêmes images et mêmes tags que `make images`.
-# À régler dans Settings → Secrets and variables → Actions :
-#   secrets DOCKERHUB_USERNAME et DOCKERHUB_TOKEN (Docker Hub → Account settings → Personal access
-#   tokens, Read & Write) et variable IMAGE_NAMESPACE (utilisateur ou organisation Docker Hub).
-#   - après une CI réussie sur un push sur main : tags `latest` et `sha-<commit>`
-#   - sur un tag de version vX.Y.Z : tags `X.Y.Z` et `X.Y`
-# Puis l'installation est testée dans un dossier vide, avec ces deux seuls fichiers.
+# Publishes the API and front-end Docker images to Docker Hub, for self-hosting without the source
+# code: docker-compose.yml + .env are enough. Same images and tags as `make images`.
+# Set in Settings → Secrets and variables → Actions:
+#   secrets DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (Docker Hub → Account settings → Personal access
+#   tokens, Read & Write) and the IMAGE_NAMESPACE variable (Docker Hub user or organization).
+#   - after CI passes on a push to main: tags `latest` and `sha-<commit>`
+#   - on a version tag vX.Y.Z: tags `X.Y.Z` and `X.Y`
+# Then the installation is tested in an empty folder, with these two files only.
 on:
   workflow_run:
     workflows:
@@ -130,7 +130,7 @@ jobs:
           path: src
           persist-credentials: false
 
-      # Dépôts Docker Hub privés : le pull demande une connexion.
+      # Private Docker Hub repositories: pulling needs a login.
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}

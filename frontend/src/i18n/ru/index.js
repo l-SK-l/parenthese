@@ -1,4 +1,4 @@
-// Dictionnaire russe, découpé par zone de l'interface comme l'anglais.
+// Russian dictionary, split by area of the interface like the English one.
 import app from './app.js'
 import arbre from './arbre.js'
 import fiche from './fiche.js'

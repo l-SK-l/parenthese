@@ -1,12 +1,12 @@
-// Traductions russes, clé = texte français exact passé à t().
+// Russian translations, key = the exact French text passed to t().
 export default {
-  // Arbre sur canvas (components/galaxy/renderers.js)
+  // Tree on the canvas (components/galaxy/renderers.js)
   'Voir les parents': 'Показать родителей',
   'Voir {firstName}': 'Показать: {firstName}',
   'Voir l’enfant': 'Показать ребёнка',
   'Inconnu': 'Неизвестно',
 
-  // Lien de parenté affiché au survol (components/galaxy/pathfinding.js)
+  // Relationship shown on hover (components/galaxy/pathfinding.js)
   'Conjoint(e)': 'Супруг(а)',
   'Beau-parent': 'Родитель супруга',
   'Bel-enfant': 'Зять/невестка',
@@ -31,12 +31,12 @@ export default {
   '{n} liens': { one: '{n} степень родства', few: '{n} степени родства', many: '{n} степеней родства' },
   '{label} par alliance': '{label} (по браку)',
 
-  // Glisser pour ajouter une personne (components/ProximityFeedback.jsx)
+  // Drag to add a person (components/ProximityFeedback.jsx)
   'Conjoint': 'Супруг(а)',
   'Frère·Sœur': 'Брат/сестра',
   'Lien': 'Связь',
 
-  // Contrôles
+  // Controls
   'Contrôle du zoom': 'Масштаб',
   'En cours': 'Загрузка',
 

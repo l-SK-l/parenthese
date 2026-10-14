@@ -1,10 +1,10 @@
-// Traductions russes, clé = texte français exact passé à t().
-// Lot « compte » : accès partagé, compte, paramètres de l'arbre, visites, barre d'actions.
+// Russian translations, key = the exact French text passed to t().
+// "account" batch: shared access, account, tree settings, visits, action bar.
 const visits = { one: '{n} посещение', few: '{n} посещения', many: '{n} посещений' }
 const people = { one: '{n} человек', few: '{n} человека', many: '{n} человек' }
 
 export default {
-  // Écran d'accès par mot de passe (AccessGate)
+  // Password access screen (AccessGate)
   "Arbre partagé": "Общее древо",
   "Cet arbre est *introuvable*": "Древо *не найдено*",
   "Ouvrir {slot}": "Открыть {slot}",
@@ -23,7 +23,7 @@ export default {
   "Créer mon arbre": "Создать моё древо",
   "Se connecter avec un compte": "Войти в аккаунт",
   "Créer un compte": "Создать аккаунт",
-  // Connexion, inscription, liste des arbres, suppression du compte (AccountDashboard)
+  // Sign-in, sign-up, tree list, account deletion (AccountDashboard)
   "Revenir à l'arbre": "Вернуться к древу",
   "Créez votre *compte*": "Создайте *аккаунт*",
   "Retrouvez votre *famille*": "Вернитесь к *семье*",
@@ -66,7 +66,7 @@ export default {
   "Annuler": "Отмена",
   "Suppression en cours": "Удаляем",
   "Supprimer définitivement": "Удалить навсегда",
-  // Panneau « Mon compte » (AccountPanel)
+  // "My account" panel (AccountPanel)
   "Mon compte": "Мой аккаунт",
   "Vous apparaissez dans cet arbre sous ce nom et avec cette photo.": "В этом древе вы отображаетесь с этим именем и фото.",
   "Dites-nous qui vous êtes dans cet arbre, votre nom et votre photo viendront de votre fiche.": "Укажите, кто вы в этом древе: имя и фото возьмутся из вашей карточки.",
@@ -76,7 +76,7 @@ export default {
   "C'est moi": "Это я",
   "Ce n'est plus moi": "Это не я",
   'Gérer mon compte': 'Управление аккаунтом',
-  // Paramètres de l'arbre (AdminPanel)
+  // Tree settings (AdminPanel)
   "Impossible de charger les paramètres de cet arbre.": "Не удалось загрузить настройки древа.",
   "Les modifications de la famille sont désormais appliquées directement.": "Теперь правки родных применяются сразу.",
   "Vous validez désormais chaque proposition de la famille.": "Теперь вы одобряете каждое предложение родных.",
@@ -125,7 +125,7 @@ export default {
   "Dernière vérification": "Последняя проверка",
   "Supprimer « {name} »": "Удалить «{name}»",
   "Tapez le nom exact de l'arbre pour confirmer.": "Введите точное название древа для подтверждения.",
-  // Onglet Visites (TreeVisitsSection)
+  // Visits tab (TreeVisitsSection)
   "téléphone": "телефон",
   "tablette": "планшет",
   "ordinateur": "компьютер",
@@ -147,8 +147,8 @@ export default {
   "Vos propres visites ne sont pas comptées. Le prénom apparaît quand le visiteur l'a donné en ouvrant l'arbre.": "Ваши собственные посещения не учитываются. Имя гостя видно, если он указал его при входе в древо.",
   "Dernières visites": "Последние посещения",
   "Aucune visite pour l'instant. Le journal a commencé le 25 septembre 2026.": "Посещений пока нет. Журнал ведётся с 25 сентября 2026 года.",
-  // Hook de compte (useAuth)
-  // Barre d'actions, menu du compte, choix de la langue (navbar)
+  // Account hook (useAuth)
+  // Action bar, account menu, language choice (navbar)
   "Aucun arbre": "Нет древа",
   "Vos arbres": "Ваши древа",
   "Arbre ouvert": "Открытое древо",

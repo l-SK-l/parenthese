@@ -1,5 +1,5 @@
-// Traductions russes, clé = texte français exact passé à t().
-// Les formes plurielles servent aux deux clés, singulier et pluriel, que le code choisit en français.
+// Russian translations, key = the exact French text passed to t().
+// Each plural object serves both keys, singular and plural, that the code picks in French.
 const changes = { one: '{n} изменение', few: '{n} изменения', many: '{n} изменений' }
 const additions = { one: '{n} добавление', few: '{n} добавления', many: '{n} добавлений' }
 const deletions = { one: '{n} удаление', few: '{n} удаления', many: '{n} удалений' }
@@ -13,7 +13,7 @@ const hoursAgo = { one: '{n} час назад', few: '{n} часа назад',
 const daysAgo = { one: '{n} день назад', few: '{n} дня назад', many: '{n} дней назад' }
 
 export default {
-  // ─── Actions et types (ContributionPanel, ContributionSessionModal) ───
+  // ─── Actions and types (ContributionPanel, ContributionSessionModal) ───
   'Création': 'Создание',
   'Ajout': 'Добавление',
   'Modification': 'Изменение',
@@ -52,7 +52,7 @@ export default {
   '{child}, enfant de {parent}': '{child}, ребёнок: {parent}',
   '{a} et {b}': '{a} и {b}',
 
-  // ─── Message d'invitation ───
+  // ─── Invitation message ───
   'Bonjour à tous,': 'Всем привет!',
   "Je rassemble l'histoire de notre famille dans un arbre en ligne, et j'aimerais que vous m'aidiez à le compléter.":
     'Я собираю историю нашей семьи в онлайн-древе и буду рад(а), если вы поможете его дополнить.',
@@ -62,7 +62,7 @@ export default {
     'Внизу экрана можно добавить фото, воспоминание или недостающего человека.',
   "Le mode d'emploi, si besoin {url}": 'Инструкция, если понадобится: {url}',
 
-  // ─── Panneau de relecture ───
+  // ─── Review panel ───
   'Copie indisponible': 'Копирование недоступно',
   'Minimum 8 caractères.': 'Минимум 8 символов.',
   'Partager et relire': 'Поделиться и проверить',
@@ -139,7 +139,7 @@ export default {
   'Oui, tout accepter': 'Да, принять всё',
   "Ce panneau est réservé à l'administration de l'arbre.": 'Эта панель только для управления древом.',
 
-  // ─── Envoi d'une contribution ───
+  // ─── Sending a contribution ───
   'Envoyer vos {em}': 'Отправьте ваши {em}',
   'modifications': 'изменения',
   'Votre contribution': 'Ваши правки',
@@ -158,7 +158,7 @@ export default {
   'Envoyer mes contributions': 'Отправить мои правки',
   'Soumission non autorisée.': 'Отправка не разрешена.',
 
-  // ─── Accueil de la famille ───
+  // ─── Family welcome ───
   'Arbre partagé': 'Общее древо',
   'Bienvenue dans {name}': 'Добро пожаловать! Это {name}',
   "l'arbre de la famille": 'семейное древо',
@@ -176,7 +176,7 @@ export default {
   "Personne ne s'appelle « {name} » dans l'arbre.": 'В древе нет никого с именем «{name}».',
   "La personne n'est pas dans l'arbre ? Ajoutez-la": 'Этого человека нет в древе? Добавьте',
 
-  // ─── Mode édition ───
+  // ─── Edit mode ───
   'Modifications en cours': 'Несохранённые изменения',
   'Quitter {em} ?': 'Выйти из {em}?',
   "l'édition": 'режима редактирования',
@@ -195,7 +195,7 @@ export default {
   "Aucune modification à envoyer pour l'instant": 'Пока нечего отправлять',
   'Quitter le mode édition': 'Выйти из режима редактирования',
 
-  // ─── Brouillon ───
+  // ─── Draft ───
   'il y a quelques secondes': 'несколько секунд назад',
   'il y a {n} minute': minutesAgo,
   'il y a {n} minutes': minutesAgo,

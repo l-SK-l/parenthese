@@ -1,6 +1,6 @@
-// Traductions russes, clé = texte français exact passé à t().
+// Russian translations, key = the exact French text passed to t().
 export default {
-  // Fiche d'une personne (PersonCard)
+  // Person profile (PersonCard)
   'Photo': 'Фото',
   'Vidéo': 'Видео',
   'Audio': 'Аудио',
@@ -80,7 +80,7 @@ export default {
   'Fermer la recherche': 'Закрыть поиск',
   'Aucune personne ne correspond': 'Никто не найден',
 
-  // Ajout et gestion des souvenirs (MediaManagerPanel, useMediaManager)
+  // Adding and managing memories (MediaManagerPanel, useMediaManager)
   'Voix': 'Голос',
   'Carte': 'Карта',
   'Doc': 'Док',
@@ -117,7 +117,7 @@ export default {
   'Descendre': 'Ниже',
   "Merci, c'est envoyé. Le souvenir apparaîtra dans la fiche quand la personne qui gère l'arbre l'aura accepté.": 'Спасибо, отправлено. Воспоминание появится в карточке, когда владелец древа его одобрит.',
 
-  // Affichage d'un souvenir (MediaViewer, GeoMediaThumbnail)
+  // Viewing a memory (MediaViewer, GeoMediaThumbnail)
   'Impossible de visualiser cette carte.': 'Не удаётся показать эту карту.',
   'Photo non disponible': 'Фото недоступно',
   'Vidéo non disponible': 'Видео недоступно',
@@ -146,7 +146,7 @@ export default {
   'Fermer le souvenir': 'Закрыть воспоминание',
   'Miniature cartographique': 'Миниатюра карты',
 
-  // Ajout d'une personne (AddPersonButton, AddPersonPanel, InlinePersonForm)
+  // Adding a person (AddPersonButton, AddPersonPanel, InlinePersonForm)
   'Glisser pour ajouter une personne': 'Перетащите, чтобы добавить человека',
   'Ajouter un conjoint': 'Добавить супруга(у)',
   'Ajouter un frère/sœur': 'Добавить брата/сестру',
@@ -187,7 +187,7 @@ export default {
   'Création en cours': 'Создаём',
   'Créer': 'Создать',
 
-  // Création d'un arbre (InitialTreeWizard, TreeCreationWizard, CreateMyTreeButton)
+  // Creating a tree (InitialTreeWizard, TreeCreationWizard, CreateMyTreeButton)
   'Vous': 'Вы',
   'Année de naissance (optionnel)': 'Год рождения (необязательно)',
   'Parent 1': 'Родитель 1',
@@ -217,7 +217,7 @@ export default {
   'Adresse :': 'Адрес:',
   "Créer l'arbre": 'Создать древо',
 
-  // Recherche (search/*)
+  // Search (search/*)
   'Rechercher une personne': 'Найти человека',
   'Un prénom, un nom, une ville': 'Имя, фамилия, город',
   'Profession': 'Профессия',
@@ -226,7 +226,7 @@ export default {
   "Personne ne s'appelle « {query} » dans cet arbre": 'В этом древе нет никого с именем «{query}»',
   '{n} autres résultats, précisez la recherche': { one: 'Ещё {n} результат, уточните поиск', few: 'Ещё {n} результата, уточните поиск', many: 'Ещё {n} результатов, уточните поиск' },
 
-  // Démo (data/mockData.js) : noms et lieux restent français
+  // Demo (data/mockData.js): names and places stay French
   'Menuisier': 'Столяр',
   'Française': 'Франция',
   'Patriarche de la famille': 'Глава семьи',

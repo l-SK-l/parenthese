@@ -1,20 +1,20 @@
-// Langue de l'interface : français, anglais ou russe.
+// Interface language: French, English or Russian.
 //
-// Le texte français sert de clé : t('Mot de passe incorrect.') renvoie la phrase telle quelle en
-// français, et sa traduction du dictionnaire anglais (./en) ou russe (./ru) sinon. Une clé absente
-// du russe retombe sur l'anglais, puis sur le français, jamais sur une chaîne vide.
+// The French text is the key: t('Mot de passe incorrect.') returns the sentence as is in French,
+// and its translation from the English (./en) or Russian (./ru) dictionary otherwise. A key missing
+// from Russian falls back to English, then to French, never to an empty string.
 //
-// Variables entre accolades : t('{n} personnes', { n: 3 }).
+// Variables in braces: t('{n} personnes', { n: 3 }).
 //
-// Pluriel : le russe a trois formes (1 человек, 2 человека, 5 человек). Une traduction peut donc
-// être un objet { one, few, many }, choisi selon {n}, ou selon la variable nommée par count
-// ({ count: 'age', … } pour t('{age} ans', { age })). Le code garde son choix singulier/pluriel
-// français, les deux clés pointent simplement vers le même objet.
+// Plurals: Russian has three forms (1 человек, 2 человека, 5 человек). A translation can therefore
+// be an object { one, few, many }, picked by {n}, or by the variable named in count
+// ({ count: 'age', … } for t('{age} ans', { age })). The code keeps its French singular/plural
+// choice, both keys simply point to the same object.
 //
-// La langue est fixée au chargement de la page : choix mémorisé, sinon le russe, quelle que soit la
-// langue du navigateur (instance auto-hébergée pour une famille russophone).
-// Changer de langue recharge la page, ce qui permet d'appeler t() partout, y compris hors React
-// (dessin de l'arbre sur canvas, données de la démo, messages d'erreur).
+// The language is fixed when the page loads: the remembered choice, otherwise Russian, whatever the
+// browser language (self-hosted instance for a Russian-speaking family).
+// Switching language reloads the page, which lets t() be called anywhere, including outside React
+// (tree drawing on the canvas, demo data, error messages).
 
 import en from './en/index.js'
 import ru from './ru/index.js'
@@ -23,7 +23,7 @@ export const LOCALES = ['ru', 'en', 'fr']
 const STORAGE_KEY = 'pz-locale'
 const DEFAULT_LOCALE = 'ru'
 
-// Dictionnaires consultés dans l'ordre, le français (la clé) en dernier recours.
+// Dictionaries looked up in order, French (the key) as the last resort.
 const DICTIONARIES = { fr: [], en: [en], ru: [ru, en] }
 
 function detectLocale() {
@@ -72,8 +72,8 @@ export function frenchTypography(text) {
 
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key)
 
-// Forme plurielle d'une traduction { one, few, many } pour ce nombre. Le nombre peut arriver déjà
-// formaté (« 1 234 ») : seuls ses chiffres comptent.
+// Plural form of a { one, few, many } translation for this number. The number may arrive already
+// formatted ("1 234"): only its digits count.
 const pluralRules = new Map()
 export function selectPlural(forms, count, lang = locale) {
   const n = typeof count === 'number' ? count : Number(String(count ?? '').replace(/\D/g, ''))

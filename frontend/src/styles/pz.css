@@ -236,9 +236,9 @@ button:disabled:has(.pz-busy.is-busy) { opacity: 1; cursor: progress; }
 }
 @keyframes pz-fade-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 
-/* ── Choix de la langue « RU ˄ » (LanguageSwitch.jsx) ──────────── */
-/* Discret : la langue courante seule, les autres se déplient au-dessus. Menus du compte et « Plus », barre d'actions hors connexion, écrans d'accès.
-   Sélecteurs à deux classes : le menu « Plus » habille tous ses boutons (.nav-more-menu button). */
+/* ── Language choice "RU ˄" (LanguageSwitch.jsx) ──────────────── */
+/* Discreet: only the current language, the others unfold above it. Account and "More" menus, action bar when signed out, access screens.
+   Two-class selectors: the "More" menu styles all of its buttons (.nav-more-menu button). */
 .pz-lang { position: relative; display: inline-flex; align-items: center; }
 .pz-lang .pz-lang-current {
   display: inline-flex; align-items: center; gap: 3px;
@@ -252,7 +252,7 @@ button:disabled:has(.pz-busy.is-busy) { opacity: 1; cursor: progress; }
 .pz-lang.is-open .pz-lang-current svg { transform: rotate(180deg); }
 .pz-lang .pz-lang-current:focus-visible { outline: 2px solid var(--pz-a500); outline-offset: 2px; }
 @media (hover: hover) and (pointer: fine) { .pz-lang:not(.is-open) .pz-lang-current:hover { background: var(--pz-a50); } }
-/* La liste s'ouvre au-dessus du bouton, calée sur son bord droit */
+/* The list opens above the button, aligned on its right edge */
 .pz-lang .pz-lang-list { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 20; min-width: 160px; transform-origin: bottom right; }
 .pz-lang .pz-lang-opt { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
 .pz-lang .pz-lang-opt:focus-visible { outline: 2px solid var(--pz-a500); outline-offset: -2px; }
@@ -266,6 +266,6 @@ button:disabled:has(.pz-busy.is-busy) { opacity: 1; cursor: progress; }
 .pz-lang-row-label svg { color: var(--pz-muted); flex: none; }
 /* Dans la barre d'actions, séparé des boutons par un filet */
 .pz-lang--nav { margin-left: 4px; padding: 0 4px 0 8px; border-left: 1px solid var(--pz-line); align-self: stretch; }
-/* Sous les écrans d'accès et de connexion : la liste se centre sur le bouton */
+/* Under the access and sign-in screens: the list is centered on the button */
 .pz-lang--screen { justify-self: center; }
 .pz-lang--screen .pz-lang-list { right: auto; left: 50%; translate: -50% 0; transform-origin: bottom center; }

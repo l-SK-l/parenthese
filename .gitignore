@@ -24,6 +24,7 @@ Thumbs.db
 
 # Configuration locale d'outils de développement
 .claude/
+.playwright-mcp
 
 # Windows reserved device-file alias accidentally listed by some shells
 NUL

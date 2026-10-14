@@ -1,6 +1,6 @@
-// Traductions russes, clé = texte français exact passé à t().
+// Russian translations, key = the exact French text passed to t().
 export default {
-  // App.jsx : récapitulatif des modifications
+  // App.jsx: summary of changes
   'Nouvelle personne': 'Новый человек',
   'Personne': 'Человек',
   'Sticker': 'Стикер',
@@ -11,7 +11,7 @@ export default {
   'Relation': 'Родственная связь',
   'Compte': 'Аккаунт',
 
-  // App.jsx : ajout de personnes et contributions
+  // App.jsx: adding people and contributions
   "Ajoutez d'abord un parent à {name} pour pouvoir lui rattacher un frère ou une sœur.": '{name}: сначала добавьте родителя, чтобы можно было привязать брата или сестру.',
   "Ajoutez d'abord un parent à cette personne pour pouvoir lui rattacher un frère ou une sœur.": 'Сначала добавьте этому человеку родителя, чтобы можно было привязать брата или сестру.',
   '{name} est dans vos modifications. Envoyez-les quand vous avez fini.': '{name} — в ваших правках. Отправьте их, когда закончите.',
@@ -22,7 +22,7 @@ export default {
   "Erreur lors de l'envoi des contributions": 'Не удалось отправить правки',
   "Merci, c'est envoyé ! Ça apparaîtra dans l'arbre une fois relu.": 'Спасибо, отправлено! Всё появится в древе после проверки.',
 
-  // App.jsx : mot de passe de partage
+  // App.jsx: sharing password
   'Session invalide.': 'Недействительная сессия.',
   "C'est bien lui. Rien ne change pour la famille.": 'Да, это он. Для семьи ничего не меняется.',
   "Ce n'est pas le mot de passe actuel de l'arbre.": 'Это не текущий пароль древа.',
@@ -31,7 +31,7 @@ export default {
   "C'est déjà le mot de passe actuel.": 'Это и так текущий пароль.',
   'Mot de passe changé. Envoyez le nouveau à la famille.': 'Пароль изменён. Отправьте новый родным.',
 
-  // App.jsx : liens familiaux
+  // App.jsx: family links
   'Lien déjà présent': 'Такая связь уже есть',
   'Lien familial ajouté (démo locale)': 'Родственная связь добавлена (локальное демо)',
   'Lien ajouté à la contribution': 'Связь добавлена в ваши правки',
@@ -41,13 +41,13 @@ export default {
   'Suppression de lien ajoutée à la contribution': 'Удаление связи добавлено в ваши правки',
   'Lien familial supprimé': 'Родственная связь удалена',
 
-  // App.jsx : accès à l'arbre
+  // App.jsx: tree access
   "Cet arbre n'existe pas.": 'Такого древа нет.',
   'Impossible de résoudre ce lien de partage.': 'Не удалось открыть эту ссылку.',
   "Aucun arbre accessible n'a pu être chargé automatiquement.": 'Не удалось автоматически загрузить ни одно доступное древо.',
   'Session invalide ou expirée. Reconnectez-vous.': 'Сессия недействительна или истекла. Войдите снова.',
 
-  // App.jsx : arbre vide
+  // App.jsx: empty tree
   'Votre arbre est créé.': 'Ваше древо создано.',
   "Ajoutez un proche pour commencer, comme votre mère, votre père ou un frère. Il suffit d'un prénom.": 'Для начала добавьте кого-то из близких: маму, папу или брата. Достаточно одного имени.',
   'Fermer': 'Закрыть',
