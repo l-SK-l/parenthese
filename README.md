@@ -1,6 +1,6 @@
 # Parenthèse
 
-[![CI](https://github.com/IliesAllali/parenthese/actions/workflows/ci.yml/badge.svg)](https://github.com/IliesAllali/parenthese/actions/workflows/ci.yml)
+[![CI](https://github.com/l-SK-l/parenthese/actions/workflows/ci.yml/badge.svg)](https://github.com/l-SK-l/parenthese/actions/workflows/ci.yml)
 
 A family tree you explore like a map, with the photos, videos and voices of each person. Share it with one link and a password: relatives look around without an account and add what they know.
 
@@ -33,21 +33,22 @@ Website: [parenthese.io/en](https://parenthese.io/en/) · Demo, no account neede
 Requirement: Docker with the Compose plugin (`docker compose version` must answer).
 
 ```bash
-git clone https://github.com/IliesAllali/parenthese.git
+git clone https://github.com/l-SK-l/parenthese.git
 cd parenthese
 cp .env.example .env
 ```
 
-You can also skip the clone. The API and front-end images are published on GitHub's registry (`ghcr.io/iliesallali/parenthese-api` and `ghcr.io/iliesallali/parenthese-web`, for amd64 and arm64), so two files are enough:
+You can also skip the clone. The API and front-end images are published on Docker Hub (`<IMAGE_NAMESPACE>/parenthese-api` and `<IMAGE_NAMESPACE>/parenthese-web`, for amd64 and arm64), so two files are enough. `IMAGE_NAMESPACE` and `IMAGE_TAG` in `.env` choose which images to run:
 
 ```bash
 mkdir parenthese && cd parenthese
-curl -fsSLO https://raw.githubusercontent.com/IliesAllali/parenthese/main/docker-compose.yml
-curl -fsSL https://raw.githubusercontent.com/IliesAllali/parenthese/main/.env.example -o .env
+curl -fsSLO https://raw.githubusercontent.com/l-SK-l/parenthese/main/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/l-SK-l/parenthese/main/.env.example -o .env
 ```
 
-Open `.env` and fill in the two empty values:
+Open `.env` and fill in the three empty values:
 
+- `IMAGE_NAMESPACE`: the Docker Hub user or organization the images are published under.
 - `POSTGRES_PASSWORD`: a password for the database (letters and digits only).
 - `JWT_SECRET`: a long random key. To generate one: `openssl rand -base64 48` or `node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"`.
 
@@ -77,16 +78,6 @@ docker compose down            # stop, data is kept
 
 To check that an installation works end to end, run `bash tools/docker-smoke.sh http://localhost` (add the port if `WEB_PORT` is not 80). The script needs `curl` and `jq`. It goes through the web port like a browser: home page, API health, account creation, sign-in, creating then deleting a test tree. The test account (`smoke-...@example.com`) stays in the database.
 
-### Single container (Unraid, NAS)
-
-For systems that install one container per app, `ghcr.io/iliesallali/parenthese-aio` runs the database, the API and the front end together:
-
-```bash
-docker run -d --name parenthese --restart unless-stopped -p 8080:80 -v /path/to/appdata/parenthese:/data ghcr.io/iliesallali/parenthese-aio
-```
-
-There is nothing to fill in. On first start the container creates the database, its password and the session key in `/data`, and reuses them afterwards. Photos and videos go to `/data/media`. Back up the whole `/data` folder with the container stopped, or dump the database while it runs with `docker exec parenthese runuser -u postgres -- pg_dump parenthese > parenthese.sql`. The database is PostgreSQL 15 here, the compose setup uses 16.
-
 ### Where the data lives
 
 Two Docker volumes, kept across restarts and updates:
@@ -115,7 +106,14 @@ The `deploy/backup.sh` script does the same (PostgreSQL dump, media archive, che
 docker compose pull && docker compose up -d
 ```
 
-`latest` follows the main branch. To stay on a version, set `PARENTHESE_VERSION` in `.env` (for example `1.0`). From a clone, `git pull && docker compose up -d --build` builds from the source instead.
+`latest` is the last published build. To stay on one, set `IMAGE_TAG` in `.env` (for example `sha-dd1bfbd`). From a clone, `git pull && docker compose up -d --build` builds from the source instead.
+
+### Publishing the images
+
+The images are built from this repository and pushed to Docker Hub, under `IMAGE_NAMESPACE` from `.env`. Each push gets two tags, `latest` and `sha-<commit>`.
+
+- From your machine: `docker login`, then `make images` (amd64 and arm64, needs a clean working tree). `make images-local` builds for this machine only, with the `local` tag: `IMAGE_TAG=local docker compose up -d` runs them.
+- From GitHub: the Images workflow publishes after CI passes on `main`. It needs the `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` secrets (a Docker Hub personal access token, Read & Write) and the `IMAGE_NAMESPACE` variable, in Settings → Secrets and variables → Actions.
 
 Database migrations apply on their own when the API starts. Make a backup first, as a habit.
 

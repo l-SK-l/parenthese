@@ -1,12 +1,14 @@
-# Parenthèse auto-hébergé : base PostgreSQL, API, front servi par nginx.
-# Configuration dans le fichier .env à la racine (copiez .env.example).
-#   docker compose up -d          démarrer
-#   docker compose logs -f api    suivre l'API
-#   docker compose down           arrêter (les volumes db-data et media sont conservés)
-#   bash tools/docker-smoke.sh    vérifier l'installation
-# Les images de l'API et du front sont publiées sur ghcr.io (version choisie par PARENTHESE_VERSION,
-# `latest` par défaut) : ce fichier et le .env suffisent, sans le code. Si l'image est introuvable,
-# compose la construit depuis les sources (dépôt cloné) ; `--build` force cette construction.
+# Self-hosted Parenthèse: PostgreSQL database, API, front end served by nginx.
+# Configuration lives in the .env file next to this one (copy .env.example).
+#   docker compose up -d          start
+#   docker compose logs -f api    follow the API log
+#   docker compose down           stop (the db-data and media volumes are kept)
+#   bash tools/docker-smoke.sh    check the installation
+# The API and front-end images come from Docker Hub: <IMAGE_NAMESPACE>/parenthese-api and
+# parenthese-web, tag IMAGE_TAG (`latest` by default), both set in .env. They are published by
+# `make images` or by CI (.github/workflows/images.yml): this file and .env are enough, without the
+# code. If an image can't be found, compose builds it from the source (cloned repository);
+# `--build` forces that build.
 
 name: parenthese
 
@@ -16,7 +18,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-parenthese}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Renseignez POSTGRES_PASSWORD dans .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-parenthese}
     volumes:
       - db-data:/var/lib/postgresql/data
@@ -27,15 +29,15 @@ services:
       retries: 12
 
   api:
-    image: ghcr.io/iliesallali/parenthese-api:${PARENTHESE_VERSION:-latest}
+    image: ${IMAGE_NAMESPACE:?Set IMAGE_NAMESPACE in .env}/parenthese-api:${IMAGE_TAG:-latest}
     build: ./backend
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
-    # Tout le .env passe à l'API (JWT_SECRET, CORS_ORIGIN, durées de session).
+    # The whole .env goes to the API (JWT_SECRET, CORS_ORIGIN, session lifetimes).
     env_file: .env
-    # Ces valeurs sont imposées par le déploiement Docker et priment sur le .env.
+    # These values are set by the Docker deployment and take precedence over .env.
     environment:
       NODE_ENV: production
       PORT: "4000"
@@ -43,27 +45,27 @@ services:
       MEDIA_STORAGE_PATH: /app/storage/media
     volumes:
       - media:/app/storage/media
-    # Au démarrage, l'image applique les migrations Prisma en attente puis lance le serveur
-    # (CMD de backend/Dockerfile).
+    # On start, the image applies pending Prisma migrations, then launches the server
+    # (CMD in backend/Dockerfile).
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5
-      # Premier lancement : les migrations passent avant que l'API réponde, 30 s ne suffisaient pas
-      # et le conteneur web, qui attend une API prête, abandonnait (signalé sur Reddit le 11/10).
+      # First start: migrations run before the API answers. 30 s was not enough, and the web
+      # container, which waits for a healthy API, gave up (reported on Reddit on 2026-10-11).
       start_period: 120s
 
   web:
-    image: ghcr.io/iliesallali/parenthese-web:${PARENTHESE_VERSION:-latest}
+    image: ${IMAGE_NAMESPACE:?Set IMAGE_NAMESPACE in .env}/parenthese-web:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.web
     restart: unless-stopped
     depends_on:
       api:
-        # nginx résout l'adresse de `api` une seule fois, à son démarrage : il attend une API prête,
-        # et redémarre quand le conteneur api est recréé (mise à jour), sinon il garderait l'ancienne adresse.
+        # nginx resolves the `api` address only once, when it starts: it waits for a healthy API,
+        # and restarts when the api container is recreated (update), otherwise it would keep the old address.
         condition: service_healthy
         restart: true
     ports:

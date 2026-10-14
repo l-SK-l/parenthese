@@ -16,7 +16,7 @@ jobs:
     steps:
       - name: Clone, as in the README
         run: |
-          git clone https://github.com/IliesAllali/parenthese.git
+          git clone https://github.com/${{ github.repository }}.git parenthese
           cd parenthese
           git log -1 --oneline
 
@@ -28,6 +28,7 @@ jobs:
           # README : POSTGRES_PASSWORD en lettres et chiffres, JWT_SECRET par openssl rand -base64 48
           sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(openssl rand -hex 24)|" .env
           sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -base64 48)|" .env
+          sed -i "s|^IMAGE_NAMESPACE=.*|IMAGE_NAMESPACE=${{ vars.IMAGE_NAMESPACE }}|" .env
           grep -Ev '^(POSTGRES_PASSWORD|JWT_SECRET)=' .env | grep -Ev '^\s*(#|$)'
 
       - name: docker compose up -d
