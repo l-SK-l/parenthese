@@ -1,7 +1,7 @@
-/* Russian guide (help/index.html), served by the app under /help/.
+/* Russian guide (ru/help/index.html), served by the app under /ru/help/.
    Taken from landing/public/guides.css (same look: terracotta accent, Newsreader + DM Sans),
    without the sign-up button or the closing call to action. Uses the app's fonts, Cyrillic included. */
-@import '../src/assets/fonts/fonts.css';
+@import '../../src/assets/fonts/fonts.css';
 
 :root {
   --grege: #fbfaf7; --papier: #ffffff;

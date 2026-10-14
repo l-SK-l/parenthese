@@ -27,11 +27,11 @@ export default defineConfig(({ mode }) => {
     // et la famille ouvre souvent l'arbre sur un vieil iPad ou un ancien téléphone
     build: {
       target: ['chrome107', 'edge107', 'firefox104', 'safari16'],
-      // Two pages: the app, and the Russian guide served under /help/ (sharing the app's fonts)
+      // Two pages: the app, and the Russian guide served under /ru/help/ (sharing the app's fonts)
       rolldownOptions: {
         input: {
           main: fileURLToPath(new URL('./index.html', import.meta.url)),
-          help: fileURLToPath(new URL('./help/index.html', import.meta.url)),
+          help: fileURLToPath(new URL('./ru/help/index.html', import.meta.url)),
         },
       },
     },
