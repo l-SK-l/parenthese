@@ -1,0 +1,65 @@
+// Traductions russes, clé = texte français exact passé à t().
+export default {
+  // Arbre sur canvas (components/galaxy/renderers.js)
+  'Voir les parents': 'Показать родителей',
+  'Voir {firstName}': 'Показать: {firstName}',
+  'Voir l’enfant': 'Показать ребёнка',
+  'Inconnu': 'Неизвестно',
+
+  // Lien de parenté affiché au survol (components/galaxy/pathfinding.js)
+  'Conjoint(e)': 'Супруг(а)',
+  'Beau-parent': 'Родитель супруга',
+  'Bel-enfant': 'Зять/невестка',
+  'Beau-frère/sœur': 'Брат/сестра супруга',
+  'Parent': 'Родитель',
+  'Grand-parent': 'Дедушка/бабушка',
+  'Arrière-grand-parent': 'Прадедушка/прабабушка',
+  'Aïeul(e) {n}e gén.': 'Предок в {n}-м поколении',
+  'Enfant': 'Ребёнок',
+  'Petit-enfant': 'Внук/внучка',
+  'Arrière-petit-enfant': 'Правнук/правнучка',
+  'Descendant(e) {n}e gén.': 'Потомок в {n}-м поколении',
+  'Frère/Sœur': 'Брат/сестра',
+  'Oncle/Tante': 'Дядя/тётя',
+  'Grand-oncle/tante': 'Двоюродный дед/бабушка',
+  'Neveu/Nièce': 'Племянник/племянница',
+  'Petit-neveu/nièce': 'Внучатый племянник/племянница',
+  'Cousin(e) germain(e)': 'Двоюродный брат/сестра',
+  'Petit-cousin(e)': 'Двоюродный родственник',
+  'Cousin(e) {n}e degré': 'Кузен(а) {n}-й степени',
+  'Cousin(e) éloigné(e)': 'Дальний родственник',
+  '{n} liens': { one: '{n} степень родства', few: '{n} степени родства', many: '{n} степеней родства' },
+  '{label} par alliance': '{label} (по браку)',
+
+  // Glisser pour ajouter une personne (components/ProximityFeedback.jsx)
+  'Conjoint': 'Супруг(а)',
+  'Frère·Sœur': 'Брат/сестра',
+  'Lien': 'Связь',
+
+  // Contrôles
+  'Contrôle du zoom': 'Масштаб',
+  'En cours': 'Загрузка',
+
+  // Annotations
+  'Sélection': 'Выбор',
+  'Texte': 'Текст',
+  'Sticker': 'Стикер',
+  'Photo': 'Фото',
+  'Taille': 'Размер',
+  'Supprimer': 'Удалить',
+  'Fin': 'Тонкая',
+  'Moyen': 'Средняя',
+  'Épais': 'Толстая',
+  'Couleur': 'Цвет',
+  'Épaisseur': 'Толщина',
+  'Relâcher pour supprimer': 'Отпустите, чтобы удалить',
+  'Glisser ici pour supprimer': 'Перетащите сюда, чтобы удалить',
+  'Stickers': 'Стикеры',
+  'Cliquez sur le canvas': 'Нажмите на холст',
+  'Saisir du texte...': 'Введите текст...',
+  'Petit': 'Маленький',
+  'Normal': 'Обычный',
+  'Grand': 'Большой',
+  'Très grand': 'Очень большой',
+  'Stabilo': 'Маркер',
+}

@@ -1,4 +1,5 @@
-// Pages du site vitrine liées depuis l'app, dans la langue de l'interface.
+// Pages du site vitrine liées depuis l'app, dans la langue de l'interface (en anglais pour le russe,
+// que le site n'a pas).
 // Une instance auto-hébergée peut pointer vers ses propres pages : VITE_HELP_URL et
 // VITE_PRIVACY_URL (au build) remplacent alors les liens vers parenthese.io, pour toutes les langues.
 import { locale } from '../i18n/index.js'
@@ -6,7 +7,7 @@ import { locale } from '../i18n/index.js'
 const env = import.meta.env || {}
 
 export const HELP_URL = env.VITE_HELP_URL
-  || (locale === 'en' ? 'https://parenthese.io/en/help/' : 'https://parenthese.io/aide/')
+  || (locale === 'fr' ? 'https://parenthese.io/aide/' : 'https://parenthese.io/en/help/')
 
 export const PRIVACY_URL = env.VITE_PRIVACY_URL
-  || (locale === 'en' ? 'https://parenthese.io/en/privacy/' : 'https://parenthese.io/donnees-et-vie-privee/')
+  || (locale === 'fr' ? 'https://parenthese.io/donnees-et-vie-privee/' : 'https://parenthese.io/en/privacy/')

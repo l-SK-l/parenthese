@@ -1,0 +1,16 @@
+// Dictionnaire russe, découpé par zone de l'interface comme l'anglais.
+import app from './app.js'
+import arbre from './arbre.js'
+import fiche from './fiche.js'
+import contribution from './contribution.js'
+import compte from './compte.js'
+import photos from './photos.js'
+
+export default {
+  ...app,
+  ...arbre,
+  ...fiche,
+  ...contribution,
+  ...compte,
+  ...photos,
+}

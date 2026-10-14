@@ -3,7 +3,8 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import en from './en/index.js'
-import { frenchTypography, t } from './index.js'
+import ru from './ru/index.js'
+import { frenchTypography, selectPlural, t } from './index.js'
 
 const SRC = fileURLToPath(new URL('..', import.meta.url))
 
@@ -44,6 +45,30 @@ describe('i18n', () => {
     const vars = (s) => (s.match(/\{\w+\}/g) ?? []).sort().join(',')
     const mismatched = Object.entries(en).filter(([fr, english]) => vars(fr) !== vars(english)).map(([fr]) => fr)
     expect(mismatched).toEqual([])
+  })
+
+  it('le russe traduit exactement les mêmes textes que l’anglais', () => {
+    expect(Object.keys(en).filter((fr) => !Object.prototype.hasOwnProperty.call(ru, fr))).toEqual([])
+    expect(Object.keys(ru).filter((fr) => !Object.prototype.hasOwnProperty.call(en, fr))).toEqual([])
+  })
+
+  it('le russe garde les mêmes variables, dans chaque forme plurielle', () => {
+    const vars = (s) => (s.match(/\{\w+\}/g) ?? []).sort().join(',')
+    const mismatched = Object.entries(ru).filter(([fr, russian]) => {
+      if (typeof russian === 'string') return vars(fr) !== vars(russian)
+      const { count = 'n', ...forms } = russian
+      return !fr.includes(`{${count}}`)
+        || !['one', 'few', 'many'].every((form) => typeof forms[form] === 'string')
+        || Object.values(forms).some((text) => vars(fr) !== vars(text))
+    }).map(([fr]) => fr)
+    expect(mismatched).toEqual([])
+  })
+
+  it('choisit la forme plurielle russe selon le nombre, même déjà formaté', () => {
+    const forms = { one: 'один', few: 'несколько', many: 'много' }
+    expect([0, 1, 2, 5, 11, 21, 22, 25, 111].map((n) => selectPlural(forms, n, 'ru')))
+      .toEqual(['много', 'один', 'несколько', 'много', 'много', 'один', 'несколько', 'много', 'много'])
+    expect(selectPlural(forms, '1 234', 'ru')).toBe('несколько')
   })
 
   it('pose les espaces insécables du français sans toucher aux variables', () => {

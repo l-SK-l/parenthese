@@ -20,7 +20,7 @@ Website: [parenthese.io/en](https://parenthese.io/en/) · Demo, no account neede
 - No account needed to visit: someone who receives the link and the password opens the tree directly.
 - Reviewed contributions: the owner chooses whether the family's changes apply right away or go through a review queue, where each change is approved or declined.
 - GEDCOM import and export, to come from another program or leave for one (the export holds the people and their links, not the media files).
-- English and French interface. It follows the browser's language, with a switch in the app, and `?lang=en` or `?lang=fr` in the address forces one.
+- Russian, English and French interface. Russian by default, with a switch in the app, and `?lang=ru`, `?lang=en` or `?lang=fr` in the address forces one.
 
 ## The promise
 
@@ -166,7 +166,7 @@ The Vite server proxies `/api`, `/trees`, `/auth` and `/health` to the local API
 
 ### Translations
 
-Interface text goes through `t()` from `frontend/src/i18n/index.js`. The French text is the key, and the English lives in `frontend/src/i18n/en/*.js`. A missing English entry falls back to French, and a test fails if any text passed to `t()` has no English entry.
+Interface text goes through `t()` from `frontend/src/i18n/index.js`. The French text is the key, the English lives in `frontend/src/i18n/en/*.js` and the Russian in `frontend/src/i18n/ru/*.js`. A missing English entry falls back to French, a missing Russian one to English. A test fails if any text passed to `t()` has no English entry, or if the Russian dictionary doesn't cover exactly the same texts as the English one.
 
 ### Tests
 
