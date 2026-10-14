@@ -13,7 +13,7 @@ Parenthèse est maintenu par une seule personne. Les retours sont les bienvenus,
 
 ## Lancer le projet en local
 
-Tout est dans la section « Développer » du [README](README.fr.md).
+Tout est dans la section « Development » du [README](README.md#development).
 
 ## Tests
 
