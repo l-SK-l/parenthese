@@ -183,6 +183,7 @@ export default {
   'Nouvelle personne': 'New person',
   'Jean': 'John',
   'Date naissance': 'Date of birth',
+  'jj/mm/aaaa': 'dd/mm/yyyy',
   'Lieu naissance': 'Birthplace',
   'Création en cours': 'Creating',
   'Créer': 'Create',

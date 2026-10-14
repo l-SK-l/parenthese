@@ -4,6 +4,7 @@ import { getParents, getChildren, getPersonUnions, getPersonMedias, filiations, 
 import GeoMediaThumbnail from './GeoMediaThumbnail'
 import './PersonCard.css'
 import PzBusy from './PzBusy.jsx'
+import DateInput from './DateInput.jsx'
 import { t, dateLocale } from '../i18n/index.js'
 
 const TYPE_LABELS = {
@@ -256,6 +257,16 @@ const PersonCard = ({
         ? new Date(`${String(value).slice(0, 10)}T00:00:00Z`).toLocaleDateString(dateLocale, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
         : value
       return <span className="value">{isEmptyValue ? '-' : shown}</span>
+    }
+    if (type === 'date') {
+      return (
+        <DateInput
+          className="pc-input value--editable"
+          value={getEditValue(field, value)}
+          onChange={(iso) => handleFieldChange(field, iso)}
+          aria-label={placeholder}
+        />
+      )
     }
     return (
       <input

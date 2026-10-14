@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { UserPlus, X, Search, ChevronDown } from 'lucide-react'
 import './AddPersonPanel.css'
 import PzBusy from './PzBusy.jsx'
+import DateInput from './DateInput.jsx'
 import { t } from '../i18n/index.js'
 
 // Titre traduit d'un bloc : le passage entre <em> et </em> garde son italique
@@ -220,11 +221,11 @@ function AddPersonPanel({ visible, persons = [], loading = false, error = '', on
           <div className="pz-row2">
             <div className="pz-field">
               <label htmlFor="ap-birthDate">{t('Naissance')}</label>
-              <input id="ap-birthDate" type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} />
+              <DateInput id="ap-birthDate" value={birthDate} onChange={setBirthDate} />
             </div>
             <div className="pz-field">
               <label htmlFor="ap-deathDate">{t('Décès')}</label>
-              <input id="ap-deathDate" type="date" value={deathDate} onChange={(e) => setDeathDate(e.target.value)} />
+              <DateInput id="ap-deathDate" value={deathDate} onChange={setDeathDate} />
             </div>
           </div>
 

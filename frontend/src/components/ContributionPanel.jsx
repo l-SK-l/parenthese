@@ -6,6 +6,7 @@ import { Check, ChevronDown, Copy, RefreshCw, X } from 'lucide-react'
 import './SettingsPanels.css'
 import PzBusy from './PzBusy.jsx'
 import { HELP_URL } from '../utils/siteLinks.js'
+import { formatDayFirst } from '../utils/dates.js'
 import { t, dateLocale } from '../i18n/index.js'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -70,8 +71,10 @@ const PERSON_FIELD_LABELS = {
   notes: t('Notes'),
 }
 
-function displayVal(v) {
+function displayVal(v, key) {
   if (v === null || v === undefined || v === '') return null
+  // Dates are stored as yyyy-mm-dd, the reviewer reads them day first like everywhere else
+  if (key === 'birthDate' || key === 'deathDate') return formatDayFirst(v) || String(v)
   return String(v)
 }
 
@@ -578,12 +581,12 @@ const ContributionPanel = ({
                                       <span className="contrib-field-label">{label}</span>
                                       {oldVal !== undefined ? (
                                         <span className="contrib-field-diff">
-                                          <span className="contrib-field-old">{displayVal(oldVal) ?? t('vide')}</span>
+                                          <span className="contrib-field-old">{displayVal(oldVal, key) ?? t('vide')}</span>
                                           <span className="contrib-field-arrow">→</span>
-                                          <span className="contrib-field-new">{displayVal(newVal) ?? t('vide')}</span>
+                                          <span className="contrib-field-new">{displayVal(newVal, key) ?? t('vide')}</span>
                                         </span>
                                       ) : (
-                                        <span className="contrib-field-new">{displayVal(newVal) ?? t('vide')}</span>
+                                        <span className="contrib-field-new">{displayVal(newVal, key) ?? t('vide')}</span>
                                       )}
                                     </div>
                                   ))}

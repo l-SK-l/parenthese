@@ -183,6 +183,7 @@ export default {
   'Nouvelle personne': 'Новый человек',
   'Jean': 'Иван',
   'Date naissance': 'Дата рождения',
+  'jj/mm/aaaa': 'дд/мм/гггг',
   'Lieu naissance': 'Место рождения',
   'Création en cours': 'Создаём',
   'Créer': 'Создать',
