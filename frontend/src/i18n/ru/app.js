@@ -76,6 +76,7 @@ export default {
   'Trop de tentatives. Réessayez dans une minute.': 'Слишком много попыток. Повторите через минуту.',
   'Connexion backend impossible. Vérifiez API/DB puis réessayez.': 'Нет связи с сервером. Проверьте API и базу данных, затем повторите.',
   'Mot de passe incorrect.': 'Неверный пароль.',
+  "Code d'invitation incorrect.": 'Неверный код приглашения.',
   'Session expirée. Reconnectez-vous puis réessayez.': 'Сессия истекла. Войдите снова и повторите.',
   'Saisissez votre mot de passe actuel.': 'Введите текущий пароль.',
   'Impossible de supprimer le compte pour le moment. Réessayez plus tard.': 'Сейчас не удаётся удалить аккаунт. Попробуйте позже.',

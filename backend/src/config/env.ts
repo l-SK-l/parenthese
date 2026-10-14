@@ -28,6 +28,16 @@ function parseTrustProxy(value: string): boolean | string {
   return value
 }
 
+// Code asked at sign-up, chosen and shared by whoever runs the instance: any characters, 4 to 32 of
+// them. Empty (the default): sign-up stays open to anyone, as before.
+export const registrationCodeSchema = z
+  .string()
+  .default('')
+  .transform((value) => value.trim())
+  .refine((value) => value === '' || (value.length >= 4 && value.length <= 32), {
+    message: 'REGISTRATION_CODE must be 4 to 32 characters long, or empty to leave sign-up open',
+  })
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
@@ -50,6 +60,7 @@ const envSchema = z.object({
   // Place disque par arbre, et part réservée aux envois de la famille en attente de relecture
   MEDIA_QUOTA_PER_TREE_MB: z.coerce.number().int().positive().default(5120),
   MEDIA_PENDING_QUOTA_PER_TREE_MB: z.coerce.number().int().positive().default(500),
+  REGISTRATION_CODE: registrationCodeSchema,
 })
 
 export const env = envSchema.parse(process.env)

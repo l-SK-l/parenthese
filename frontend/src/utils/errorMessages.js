@@ -39,6 +39,10 @@ export function getAccountDeletionErrorMessage(error) {
 export function getAccountErrorMessage(error) {
   const errorCode = error?.payload?.error || error?.message || ''
 
+  if (errorCode === 'invalid_registration_code') {
+    return t("Code d'invitation incorrect.")
+  }
+
   if (errorCode === 'image_too_large') {
     return t('Image trop volumineuse (maximum 5 Mo).')
   }

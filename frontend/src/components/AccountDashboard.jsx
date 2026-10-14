@@ -6,6 +6,7 @@ import PzBusy from './PzBusy.jsx'
 import LanguageSwitch from './navbar/LanguageSwitch'
 import { t } from '../i18n/index.js'
 import { PRIVACY_URL } from '../utils/siteLinks.js'
+import { fetchAuthConfig } from '../api/authApi.js'
 
 // Phrase traduite d'un bloc : les passages entre astérisques passent en <em>, {slot} reçoit un nœud.
 function richText(text, slotNode = null) {
@@ -38,6 +39,9 @@ const AccountDashboard = ({
   const [firstName, setFirstName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [registrationCode, setRegistrationCode] = useState('')
+  // Set by the instance (REGISTRATION_CODE): the sign-up form then asks for the code
+  const [registrationCodeRequired, setRegistrationCodeRequired] = useState(false)
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [deletePassword, setDeletePassword] = useState('')
   const [deleteError, setDeleteError] = useState('')
@@ -78,15 +82,25 @@ const AccountDashboard = ({
     setMode(defaultMode === 'register' ? 'register' : 'login')
   }, [defaultMode])
 
+  useEffect(() => {
+    let cancelled = false
+    fetchAuthConfig()
+      .then((config) => { if (!cancelled) setRegistrationCodeRequired(Boolean(config?.registrationCodeRequired)) })
+      .catch(() => { /* older API without /auth/config: no code field, as before */ })
+    return () => { cancelled = true }
+  }, [])
+
   const isRegister = mode === 'register'
+  const askRegistrationCode = isRegister && registrationCodeRequired
 
   const canSubmitAuth = useMemo(() => {
     if (loading) return false
     if (!email.trim()) return false
     if (password.length < 8) return false
     if (isRegister && !firstName.trim()) return false
+    if (askRegistrationCode && !registrationCode.trim()) return false
     return true
-  }, [email, firstName, isRegister, loading, password.length])
+  }, [askRegistrationCode, email, firstName, isRegister, loading, password.length, registrationCode])
 
   const handleAuthSubmit = async (event) => {
     event.preventDefault()
@@ -96,7 +110,7 @@ const AccountDashboard = ({
 
     const safeEmail = email.trim().toLowerCase()
     if (isRegister) {
-      await onRegister?.(firstName.trim(), safeEmail, password)
+      await onRegister?.(firstName.trim(), safeEmail, password, askRegistrationCode ? registrationCode.trim() : undefined)
       return
     }
     await onLogin(safeEmail, password)
@@ -175,6 +189,24 @@ const AccountDashboard = ({
                 />
                 {isRegister && <p className="pz-hint">{t('8 caractères minimum.')}</p>}
               </div>
+
+              {askRegistrationCode && (
+                <div className="pz-field">
+                  <label htmlFor="accountRegistrationCode">{t("Code d'invitation")}</label>
+                  <input
+                    id="accountRegistrationCode"
+                    type="text"
+                    autoComplete="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    value={registrationCode}
+                    maxLength={64}
+                    onChange={(event) => setRegistrationCode(event.target.value)}
+                    required
+                  />
+                  <p className="pz-hint">{t('Demandez-le à la personne qui a installé Parenthèse.')}</p>
+                </div>
+              )}
 
               {errorMessage && <div className="account-error pz-error" role="alert">{errorMessage}</div>}
 

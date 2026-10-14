@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
@@ -296,6 +296,82 @@ describe('Auth routes', () => {
 
     expect(response.statusCode).toBe(401)
     await app.close()
+  })
+})
+
+describe('Registration code', () => {
+  let env: { REGISTRATION_CODE: string }
+
+  beforeAll(async () => {
+    ({ env } = await import('../src/config/env.js'))
+  })
+
+  afterEach(() => {
+    env.REGISTRATION_CODE = ''
+  })
+
+  async function register(payload: Record<string, unknown>) {
+    const app = createApp()
+    const response = await app.inject({ method: 'POST', url: '/auth/register', payload })
+    await app.close()
+    return response
+  }
+
+  it('tells the sign-up form whether a code is needed', async () => {
+    const app = createApp()
+    const open = await app.inject({ method: 'GET', url: '/auth/config' })
+    expect(open.statusCode).toBe(200)
+    expect(open.json()).toEqual({ registrationCodeRequired: false })
+
+    env.REGISTRATION_CODE = '1234'
+    const closed = await app.inject({ method: 'GET', url: '/auth/config' })
+    expect(closed.json()).toEqual({ registrationCodeRequired: true })
+    await app.close()
+  })
+
+  it('refuses sign-up without the code, before looking at the email', async () => {
+    env.REGISTRATION_CODE = '1234'
+    const response = await register({ email: 'new@example.com', password: 'password123' })
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json().error).toBe('invalid_registration_code')
+    expect(prismaMock.user.findUnique).not.toHaveBeenCalled()
+    expect(prismaMock.user.create).not.toHaveBeenCalled()
+  })
+
+  it('refuses a wrong code', async () => {
+    env.REGISTRATION_CODE = '1234'
+    const response = await register({ email: 'new@example.com', password: 'password123', registrationCode: '4321' })
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json().error).toBe('invalid_registration_code')
+    expect(prismaMock.user.create).not.toHaveBeenCalled()
+  })
+
+  it('accepts the right code, spaces around it ignored', async () => {
+    env.REGISTRATION_CODE = 'Семья-Петровых 2026'
+    const response = await register({ email: 'new@example.com', password: 'password123', registrationCode: '  Семья-Петровых 2026 ' })
+
+    expect(response.statusCode).toBe(201)
+    expect(prismaMock.user.create).toHaveBeenCalledOnce()
+  })
+
+  it('keeps sign-up open when no code is set', async () => {
+    const response = await register({ email: 'new@example.com', password: 'password123', registrationCode: 'anything' })
+    expect(response.statusCode).toBe(201)
+  })
+})
+
+describe('REGISTRATION_CODE setting', () => {
+  it('takes any code of 4 to 32 characters, or nothing', async () => {
+    const { registrationCodeSchema } = await import('../src/config/env.js')
+    expect(registrationCodeSchema.parse(undefined)).toBe('')
+    expect(registrationCodeSchema.parse('')).toBe('')
+    expect(registrationCodeSchema.parse('1234')).toBe('1234')
+    expect(registrationCodeSchema.parse(' abcd ')).toBe('abcd')
+    expect(registrationCodeSchema.parse('x'.repeat(32))).toBe('x'.repeat(32))
+    expect(registrationCodeSchema.safeParse('123').success).toBe(false)
+    expect(registrationCodeSchema.safeParse('x'.repeat(33)).success).toBe(false)
   })
 })
 

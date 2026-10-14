@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 
 import { env } from '../config/env.js'
@@ -19,6 +19,20 @@ const credentialsSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8).max(128),
 })
+
+const registerSchema = credentialsSchema.extend({
+  registrationCode: z.string().max(256).optional(),
+})
+
+// Sign-up code check. Both sides are hashed so timingSafeEqual compares equal lengths and the
+// answer time says nothing about the code. No code set on the server: sign-up is open.
+function isRegistrationCodeAccepted(given: string | undefined): boolean {
+  const expected = env.REGISTRATION_CODE
+  if (!expected) return true
+  const givenHash = createHash('sha256').update((given ?? '').trim()).digest()
+  const expectedHash = createHash('sha256').update(expected).digest()
+  return timingSafeEqual(givenHash, expectedHash)
+}
 
 const deleteAccountSchema = z.object({
   password: z.string().min(1).max(128),
@@ -83,6 +97,11 @@ async function resolveAccessibleLastTree(
 }
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
+  // What the sign-up form needs to know before it is shown: whether to ask for the code
+  app.get('/config', async () => ({
+    registrationCodeRequired: env.REGISTRATION_CODE !== '',
+  }))
+
   app.post(
     '/register',
     {
@@ -94,9 +113,14 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (request, reply) => {
-      const parsed = credentialsSchema.safeParse(request.body)
+      const parsed = registerSchema.safeParse(request.body)
       if (!parsed.success) {
         return reply.code(400).send({ error: 'invalid_payload', details: parsed.error.flatten() })
+      }
+
+      // Checked before the email, so that without the code nobody learns which addresses have an account
+      if (!isRegistrationCodeAccepted(parsed.data.registrationCode)) {
+        return reply.code(403).send({ error: 'invalid_registration_code' })
       }
 
       const email = parsed.data.email.trim().toLowerCase()

@@ -37,6 +37,22 @@ components:
           minLength: 8
           maxLength: 128
       required: [email, password]
+    RegisterRequest:
+      allOf:
+        - $ref: '#/components/schemas/Credentials'
+        - type: object
+          properties:
+            registrationCode:
+              type: string
+              maxLength: 256
+              description: Required when the instance sets REGISTRATION_CODE (see GET /auth/config).
+    AuthConfig:
+      type: object
+      properties:
+        registrationCodeRequired:
+          type: boolean
+          description: True when sign-up asks for the code set in REGISTRATION_CODE.
+      required: [registrationCodeRequired]
     User:
       type: object
       properties:
@@ -517,6 +533,18 @@ components:
       required: [decision]
 
 paths:
+  /auth/config:
+    get:
+      tags: [Auth]
+      summary: Sign-up settings the form needs
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthConfig'
+
   /auth/register:
     post:
       tags: [Auth]
@@ -526,7 +554,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Credentials'
+              $ref: '#/components/schemas/RegisterRequest'
       responses:
         '201':
           description: Registered
@@ -536,6 +564,12 @@ paths:
                 $ref: '#/components/schemas/AuthResponse'
         '400':
           description: Invalid payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Missing or wrong registration code (invalid_registration_code)
           content:
             application/json:
               schema:

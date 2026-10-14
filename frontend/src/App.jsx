@@ -2242,8 +2242,8 @@ function App() {
     }
   }
 
-  const handleRegister = async (firstName, email, password) => {
-    const success = await auth.handleRegister(firstName, email, password)
+  const handleRegister = async (firstName, email, password, registrationCode) => {
+    const success = await auth.handleRegister(firstName, email, password, registrationCode)
     if (!success) {
       return
     }

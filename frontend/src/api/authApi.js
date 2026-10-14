@@ -9,13 +9,18 @@ export async function loginUser(email, password) {
   return data
 }
 
-export async function registerUser(firstName, email, password) {
+export async function registerUser(firstName, email, password, registrationCode) {
   const data = await apiRequest('/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ firstName, email, password }),
+    body: JSON.stringify({ firstName, email, password, ...(registrationCode ? { registrationCode } : {}) }),
   })
 
   return data
+}
+
+// Sign-up settings of this instance: { registrationCodeRequired }
+export async function fetchAuthConfig() {
+  return apiRequest('/auth/config', { method: 'GET' })
 }
 
 export async function logoutUser(token) {

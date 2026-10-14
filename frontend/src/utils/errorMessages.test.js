@@ -44,6 +44,11 @@ describe('getShareErrorMessage', () => {
 })
 
 describe('getAccountErrorMessage', () => {
+  it('names a missing or wrong registration code', () => {
+    expect(getAccountErrorMessage({ status: 403, payload: { error: 'invalid_registration_code' } }))
+      .toBe("Code d'invitation incorrect.")
+  })
+
   it('returns db unavailable message for 503 database_unavailable', () => {
     expect(getAccountErrorMessage({ status: 503, message: 'database_unavailable' }))
       .toBe('Base de données indisponible. Lancez `npm run db:bootstrap` dans le backend.')

@@ -33,6 +33,8 @@ export default {
   "camille@exemple.fr": "camille@example.com",
   "Mot de passe": "Password",
   "8 caractères minimum.": "At least 8 characters.",
+  "Code d'invitation": "Invitation code",
+  "Demandez-le à la personne qui a installé Parenthèse.": "Ask the person who set up Parenthèse for it.",
   "Création du compte": "Creating your account",
   "Connexion": "Signing in",
   "Créer mon compte": "Create my account",

@@ -76,6 +76,7 @@ export default {
   'Trop de tentatives. Réessayez dans une minute.': 'Too many attempts. Try again in a minute.',
   'Connexion backend impossible. Vérifiez API/DB puis réessayez.': 'Could not reach the server. Check the API and database, then try again.',
   'Mot de passe incorrect.': 'Incorrect password.',
+  "Code d'invitation incorrect.": 'Wrong invitation code.',
   'Session expirée. Reconnectez-vous puis réessayez.': 'Your session has expired. Sign in again, then try again.',
   'Saisissez votre mot de passe actuel.': 'Enter your current password.',
   'Impossible de supprimer le compte pour le moment. Réessayez plus tard.': 'We could not delete your account right now. Try again later.',

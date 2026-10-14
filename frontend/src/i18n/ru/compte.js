@@ -35,6 +35,8 @@ export default {
   "camille@exemple.fr": "anna@example.com",
   "Mot de passe": "Пароль",
   "8 caractères minimum.": "Минимум 8 символов.",
+  "Code d'invitation": "Код приглашения",
+  "Demandez-le à la personne qui a installé Parenthèse.": "Его можно получить у того, кто установил Parenthèse.",
   "Création du compte": "Создаём аккаунт",
   "Connexion": "Входим",
   "Créer mon compte": "Создать аккаунт",
