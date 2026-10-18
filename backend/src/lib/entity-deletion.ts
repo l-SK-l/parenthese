@@ -32,7 +32,7 @@ export async function softDeletePersonCascade(
 
   await db.person.updateMany({
     where: { id: personId, treeId, deletedAt: null },
-    data: { deletedAt: now, updatedBy: actorUserId, avatarPath: null, avatarMimeType: null },
+    data: { deletedAt: now, updatedBy: actorUserId, avatarPath: null, avatarMimeType: null, immichPersonId: null },
   })
 
   const unions = await db.union.findMany({
@@ -70,6 +70,15 @@ export async function softDeletePersonCascade(
     }),
     db.mediaItem.updateMany({
       where: { treeId, personId, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    // Événements de vie de la personne et de ses unions
+    db.lifeEvent.updateMany({
+      where: {
+        treeId,
+        deletedAt: null,
+        OR: [{ personId }, ...(unionIds.length > 0 ? [{ unionId: { in: unionIds } }] : [])],
+      },
       data: { deletedAt: now },
     }),
   ])

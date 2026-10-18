@@ -59,6 +59,38 @@ export async function fetchTreeGraph(treeId, token) {
   }
 }
 
+// Frise de vie d'une personne : événements, précisions de date, lieux des unions
+export async function fetchPersonLife(treeId, personId, token) {
+  return apiRequest(`/trees/${encodeURIComponent(treeId)}/persons/${encodeURIComponent(personId)}/life`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+}
+
+// Moments saisis dans l'onglet Vie (administrateurs)
+export async function createLifeEvent(treeId, personId, payload, token) {
+  return apiRequest(`/trees/${encodeURIComponent(treeId)}/persons/${encodeURIComponent(personId)}/life/events`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function updateLifeEvent(treeId, eventId, payload, token) {
+  return apiRequest(`/trees/${encodeURIComponent(treeId)}/life/events/${encodeURIComponent(eventId)}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function deleteLifeEvent(treeId, eventId, token) {
+  return apiRequest(`/trees/${encodeURIComponent(treeId)}/life/events/${encodeURIComponent(eventId)}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+}
+
 export async function listTrees(token) {
   const data = await apiRequest('/trees', {
     method: 'GET',
@@ -190,6 +222,17 @@ export async function deleteUnion(treeId, unionId, token) {
   })
 
   return data
+}
+
+// Ordre d'une fratrie : chaque enfant, dans l'ordre voulu, avec ses liens vers ses parents
+export async function reorderSiblings(treeId, order, token) {
+  return apiRequest(`/trees/${encodeURIComponent(treeId)}/links/order`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ order }),
+  })
 }
 
 export async function deleteParentChildLink(treeId, linkId, token) {

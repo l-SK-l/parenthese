@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
+import DateField from './DateField.jsx'
 import { UserPlus, X, Search, ChevronDown } from 'lucide-react'
 import './AddPersonPanel.css'
 import PzBusy from './PzBusy.jsx'
-import DateInput from './DateInput.jsx'
 import { t } from '../i18n/index.js'
 
 // Titre traduit d'un bloc : le passage entre <em> et </em> garde son italique
@@ -36,6 +36,10 @@ function AddPersonPanel({ visible, persons = [], loading = false, error = '', on
   const [birthName, setBirthName] = useState('')
   const [birthDate, setBirthDate] = useState('')
   const [deathDate, setDeathDate] = useState('')
+  // Décédé(e) sans date connue (issue #77)
+  const [isDeceased, setIsDeceased] = useState(false)
+  // Les champs de date gardent leur texte : on les recrée après chaque ajout
+  const [dateFieldsKey, setDateFieldsKey] = useState(0)
   const [relations, setRelations] = useState([])
   const [relationSearch, setRelationSearch] = useState('')
   const [relationDropdownOpen, setRelationDropdownOpen] = useState(false)
@@ -89,6 +93,8 @@ function AddPersonPanel({ visible, persons = [], loading = false, error = '', on
       setBirthName('')
       setBirthDate('')
       setDeathDate('')
+      setIsDeceased(false)
+      setDateFieldsKey((k) => k + 1)
       setRelations([])
       setTouched({})
       setJustAdded(false)
@@ -135,11 +141,10 @@ function AddPersonPanel({ visible, persons = [], loading = false, error = '', on
       birthName: birthName.trim() || null,
       birthDate: birthDate || null,
       deathDate: deathDate || null,
+      isDeceased: !deathDate && isDeceased,
       relations,
     })
   }
-
-  const isValid = firstName.trim().length > 0
 
   const relationTypeLabels = {
     parent: t('Parent de'),
@@ -174,7 +179,7 @@ function AddPersonPanel({ visible, persons = [], loading = false, error = '', on
 
       <form className="apn-form" onSubmit={handleSubmit}>
         <div className="apn-scroll">
-          <div className="pz-row2">
+          <div className="pz-row2 apn-row">
             <div className="pz-field">
               <label htmlFor="ap-firstName">{t('Prénom')}</label>
               <input
@@ -184,7 +189,6 @@ function AddPersonPanel({ visible, persons = [], loading = false, error = '', on
                 className={touched.firstName && !firstName.trim() ? 'apn-input--error' : ''}
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
-                onBlur={() => setTouched((prev) => ({ ...prev, firstName: true }))}
                 placeholder={t('Marie')}
                 autoComplete="off"
                 aria-invalid={touched.firstName && !firstName.trim()}
@@ -218,14 +222,20 @@ function AddPersonPanel({ visible, persons = [], loading = false, error = '', on
             />
           </div>
 
-          <div className="pz-row2">
+          <div className="pz-row2 apn-row">
             <div className="pz-field">
               <label htmlFor="ap-birthDate">{t('Naissance')}</label>
-              <DateInput id="ap-birthDate" value={birthDate} onChange={setBirthDate} />
+              <DateField key={`b-${dateFieldsKey}`} id="ap-birthDate" value={birthDate} onChange={setBirthDate} />
             </div>
             <div className="pz-field">
               <label htmlFor="ap-deathDate">{t('Décès')}</label>
-              <DateInput id="ap-deathDate" value={deathDate} onChange={setDeathDate} />
+              <DateField key={`d-${dateFieldsKey}`} id="ap-deathDate" value={deathDate} onChange={setDeathDate} />
+              {!deathDate && (
+                <label className="apn-deceased">
+                  <input type="checkbox" checked={isDeceased} onChange={(e) => setIsDeceased(e.target.checked)} />
+                  {t('Décédé(e), date inconnue')}
+                </label>
+              )}
             </div>
           </div>
 
@@ -312,7 +322,9 @@ function AddPersonPanel({ visible, persons = [], loading = false, error = '', on
           <button type="button" className="pz-btn pz-btn--ghost" onClick={onClose}>
             {t('Annuler')}
           </button>
-          <button type="submit" className="pz-btn pz-btn--primary" disabled={!isValid || loading}>
+          {/* Toujours actif : sans prénom, l'appui le dit et ramène au champ (le dire dès qu'on quittait le prénom
+              affichait une erreur avant même d'avoir rempli la fiche) */}
+          <button type="submit" className="pz-btn pz-btn--primary" disabled={loading}>
             <UserPlus size={16} strokeWidth={2} />
             <PzBusy busy={loading} busyLabel={t('Ajout en cours')}>{t('Ajouter cette personne')}</PzBusy>
           </button>

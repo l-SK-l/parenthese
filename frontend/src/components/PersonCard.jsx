@@ -1,11 +1,19 @@
 ﻿import { useState, useEffect, useRef, forwardRef } from 'react'
-import { Save, Trash2, Plus, X, Search, Check, Play, ImagePlus } from 'lucide-react'
-import { getParents, getChildren, getPersonUnions, getPersonMedias, filiations, persons, unions } from '../data/mockData'
+import { createPortal } from 'react-dom'
+import { Save, Trash2, Plus, X, Search, Check, Play, ImagePlus, Sparkles, ChevronLeft, ChevronRight } from 'lucide-react'
+import { getParents, getChildren, getPersonUnions, getPersonMedias, getDemoLife, filiations, persons, unions } from '../data/mockData'
+import { fetchPersonLife } from '../api/treeApi.js'
+import LifeTimeline from './LifeTimeline.jsx'
+import MomentSheet from './MomentSheet.jsx'
+import { fetchImmichConfig } from '../api/immichApi.js'
 import GeoMediaThumbnail from './GeoMediaThumbnail'
+import ImmichFacePanel from './ImmichFacePanel.jsx'
 import './PersonCard.css'
 import PzBusy from './PzBusy.jsx'
-import DateInput from './DateInput.jsx'
 import { t, dateLocale } from '../i18n/index.js'
+import { formatPlace } from '../utils/place.js'
+import { isYearOnly } from '../utils/dateInput.js'
+import DateField from './DateField.jsx'
 
 const TYPE_LABELS = {
   photo: t('Photo'),
@@ -36,6 +44,9 @@ const PersonCard = ({
   onManageMedia,
   onAvatarUpload,
   onAvatarDelete,
+  treeId = null,
+  immichToken = null,
+  onImmichChange,
   avatarActionLoading = false,
   avatarActionError = '',
   isAdmin = false,
@@ -46,9 +57,40 @@ const PersonCard = ({
   relationActionLoading = false,
   relationActionSuccess = '',
   relationActionError = '',
+  siblingPlace = null,
+  onMoveSibling,
+  onUploadMomentFile,
+  onMomentSaved,
 }) => {
   // Souvenirs d'abord quand il y en a, ou quand on peut en ajouter : c'est là qu'est le bouton
   const [tab, setTab] = useState(() => (getPersonMedias(person.id).length > 0 || canManageMedia ? 'medias' : 'infos'))
+  const [lifeState, setLifeState] = useState({ personId: null, data: null, loading: false, failed: false })
+
+  const lifeRequestedFor = useRef(null)
+  // Fiche « Ajouter un moment » : null fermée, {} pour ajouter, { event } pour modifier
+  const [momentSheet, setMomentSheet] = useState(null)
+  const [lifeRevision, setLifeRevision] = useState(0)
+  // Moment envoyé par la famille : on dit qu'il attend la relecture
+  const [lifeNotice, setLifeNotice] = useState('')
+
+  useEffect(() => {
+    if (tab !== 'vie' || lifeRequestedFor.current === person.id) return undefined
+    lifeRequestedFor.current = person.id
+    if (!treeId || !immichToken) {
+      setLifeState({ personId: person.id, data: getDemoLife(person.id), loading: false, failed: false })
+      return undefined
+    }
+    let cancelled = false
+    // Retour sur l'onglet : on garde la frise affichée pendant qu'elle se rafraîchit
+    setLifeState((prev) => (prev.personId === person.id && prev.data ? prev : { personId: person.id, data: null, loading: true, failed: false }))
+    fetchPersonLife(treeId, person.id, immichToken)
+      .then((data) => { if (!cancelled) setLifeState({ personId: person.id, data, loading: false, failed: false }) })
+      .catch(() => { if (!cancelled) setLifeState({ personId: person.id, data: null, loading: false, failed: true }) })
+    return () => {
+      cancelled = true
+      lifeRequestedFor.current = null
+    }
+  }, [tab, person.id, treeId, immichToken, lifeRevision])
 
   // État local pour les modifications en mode édition
   const [edits, setEdits] = useState({})
@@ -56,6 +98,14 @@ const PersonCard = ({
   const [saving, setSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showImmichPanel, setShowImmichPanel] = useState(false)
+  // null : connexion Immich de l'arbre inconnue, puis booléen. Le menu de source ne se propose
+  // qu'à qui peut agir (owner/admin de l'arbre, comme pour toute action Immich) et seulement
+  // si l'arbre est connecté ou qu'une association passée demande un nettoyage.
+  const [immichConfigured, setImmichConfigured] = useState(null)
+  const [showSourceMenu, setShowSourceMenu] = useState(false)
+  const [sourceMenuPos, setSourceMenuPos] = useState({ top: 0, left: 0 })
+  const sourceBtnRef = useRef(null)
 
   // Inline relation search state
   const [activeRelationSearch, setActiveRelationSearch] = useState(null) // 'parent' | 'spouse' | 'child' | null
@@ -71,7 +121,50 @@ const PersonCard = ({
     setActiveRelationSearch(null)
     setRelationSearchQuery('')
     setSaveSuccess(false)
+    setShowSourceMenu(false)
+    setMomentSheet(null)
+    setLifeNotice('')
   }, [person.id])
+
+  // Connexion Immich de l'arbre : métadonnées sans clé. Une erreur (rôle périmé, réseau) se
+  // traduit par « non configuré » : la fiche reste utilisable, simplement sans choix de source.
+  // Seul un administrateur de l'arbre voit l'option Immich, comme côté serveur.
+  useEffect(() => {
+    let cancelled = false
+    setImmichConfigured(null)
+    setShowSourceMenu(false)
+    if (!editMode || !isAdmin || !treeId || !onImmichChange || !immichToken) return undefined
+    fetchImmichConfig(treeId, immichToken)
+      .then(({ config }) => { if (!cancelled) setImmichConfigured(Boolean(config?.configured)) })
+      .catch(() => { if (!cancelled) setImmichConfigured(false) })
+    return () => { cancelled = true }
+  }, [editMode, isAdmin, treeId, immichToken, onImmichChange])
+
+  useEffect(() => {
+    if (!showSourceMenu) return undefined
+    const onKeyDown = (event) => { if (event.key === 'Escape') setShowSourceMenu(false) }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showSourceMenu])
+
+  const immichUsable = isAdmin && Boolean(immichConfigured || person.avatarFromImmich)
+  const openAvatarPicker = () => {
+    if (avatarActionLoading) return
+    if (immichUsable) {
+      const rect = sourceBtnRef.current?.getBoundingClientRect()
+      if (rect) {
+        setSourceMenuPos({
+          top: Math.round(rect.bottom) + 6,
+          left: Math.round(Math.min(rect.left, window.innerWidth - 252)),
+        })
+      }
+      setShowSourceMenu(true)
+    } else {
+      avatarInputRef.current?.click()
+    }
+  }
+  const chooseFileSource = () => { setShowSourceMenu(false); avatarInputRef.current?.click() }
+  const chooseImmichSource = () => { setShowSourceMenu(false); setShowImmichPanel(true) }
 
   // Focus search input when relation search opens
   useEffect(() => {
@@ -182,6 +275,29 @@ const PersonCard = ({
   })()
   const personMedias = getPersonMedias(person.id)
 
+  // Frise de vie : la famille vient de l'arbre déjà chargé, les événements de la route /life,
+  // demandée seulement à l'ouverture de l'onglet (la démo a ses propres données)
+  const siblingsList = (() => {
+    const seen = new Map()
+    for (const parent of parentsList) {
+      for (const child of getChildren(parent.id)) if (child.id !== person.id) seen.set(child.id, child)
+    }
+    return [...seen.values()]
+  })()
+  // Ajouter un moment : l'administrateur, et la famille qui peut proposer des souvenirs (relu ensuite).
+  // Modifier un moment ou compléter une naissance : l'administrateur. La démo reste en lecture.
+  const canAddMoment = Boolean(onUploadMomentFile && treeId && immichToken && (isAdmin || canManageMedia))
+  const canEditMoments = canAddMoment && isAdmin
+  const lifeFamily = {
+    parents: parentsList,
+    children: childrenList,
+    siblings: siblingsList,
+    unions: personUnions.map((union) => ({
+      ...union,
+      partner: persons.find((p) => p.id === (union.partner1Id === person.id ? union.partner2Id : union.partner1Id)) || null,
+    })),
+  }
+
   // Filter persons for relation search (exclude current person + already linked)
   const getFilteredPersonsForRelation = (relationType) => {
     const excludeIds = new Set([person.id])
@@ -215,7 +331,9 @@ const PersonCard = ({
       if (union) {
         const p1 = persons.find(p => p.id === union.partner1Id)
         const p2 = persons.find(p => p.id === union.partner2Id)
-        return `${p1?.firstName || '?'} + ${p2?.firstName || '?'} (${unionTypeLabel(union.unionType)})`
+        // Union sans type (fréquent après un import GEDCOM) : pas de « (null) » à côté des prénoms
+        const kind = union.unionType ? ` (${unionTypeLabel(union.unionType)})` : ''
+        return `${p1?.firstName || '?'} + ${p2?.firstName || '?'}${kind}`
       }
     }
 
@@ -249,22 +367,24 @@ const PersonCard = ({
   }
 
   // Rendu d'un champ éditable ou lecture seule
-  const renderEditableValue = ({ field, value, placeholder, type = 'text' }) => {
+  const renderEditableValue = ({ field, value, placeholder, type = 'text', format = null, emptyLabel = '-' }) => {
     if (!editMode) {
       const isEmptyValue = value === null || value === undefined || value === ''
-      // Une date complète se lit « 22 octobre 1928 », pas « 1928-10-22 »
-      const shown = type === 'date' && /^\d{4}-\d{2}-\d{2}/.test(String(value))
-        ? new Date(`${String(value).slice(0, 10)}T00:00:00Z`).toLocaleDateString(dateLocale, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
-        : value
-      return <span className="value">{isEmptyValue ? '-' : shown}</span>
+      // Une date complète se lit « 22 octobre 1928 », une année seule « 1928 », pas « 1 janvier 1928 »
+      let shown = format ? format(value) : value
+      if (type === 'date' && isYearOnly(value)) shown = String(value).slice(0, 4)
+      else if (type === 'date' && /^\d{4}-\d{2}-\d{2}/.test(String(value))) {
+        shown = new Date(`${String(value).slice(0, 10)}T00:00:00Z`).toLocaleDateString(dateLocale, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
+      }
+      return <span className="value">{isEmptyValue ? emptyLabel : shown}</span>
     }
     if (type === 'date') {
       return (
-        <DateInput
+        <DateField
+          key={`${person.id}-${field}`}
           className="pc-input value--editable"
           value={getEditValue(field, value)}
-          onChange={(iso) => handleFieldChange(field, iso)}
-          aria-label={placeholder}
+          onChange={(next) => handleFieldChange(field, next)}
         />
       )
     }
@@ -290,8 +410,8 @@ const PersonCard = ({
     const born = person.birthYear || (person.birthDate ? String(person.birthDate).slice(0, 4) : '')
     const died = person.deathYear || (person.deathDate ? String(person.deathDate).slice(0, 4) : '')
     const parts = []
-    if (born) parts.push(`${born}${person.birthPlace ? `, ${person.birthPlace}` : ''}`)
-    if (!person.isAlive && died) parts.push(died)
+    if (born) parts.push(`${born}${person.birthPlace ? `, ${formatPlace(person.birthPlace)}` : ''}`)
+    if (!person.isAlive) parts.push(died || '?')
     return parts.join(' – ')
   })()
   const ageLabel = age === null ? null : person.isAlive ? t('{age} ans', { age }) : t('{age} ans au décès', { age })
@@ -374,11 +494,24 @@ const PersonCard = ({
           )}
           {editMode && onAvatarUpload && (
             <div className="pc-photo-actions">
-              <button type="button" className="pc-photo-btn" onClick={() => avatarInputRef.current?.click()} disabled={avatarActionLoading}>
+              <button
+                ref={sourceBtnRef}
+                type="button"
+                className="pc-photo-btn"
+                onClick={openAvatarPicker}
+                disabled={avatarActionLoading}
+                aria-haspopup="menu"
+                aria-expanded={showSourceMenu}
+              >
                 {person.photo ? t('Changer') : t('Ajouter une photo')}
               </button>
               {person.photo && (
-                <button type="button" className="pc-photo-btn pc-photo-btn--danger" onClick={() => onAvatarDelete?.(person.id)} disabled={avatarActionLoading}>
+                <button
+                  type="button"
+                  className="pc-photo-btn pc-photo-btn--danger"
+                  onClick={() => onAvatarDelete?.(person.id, person.avatarFromImmich)}
+                  disabled={avatarActionLoading}
+                >
                   {t('Retirer')}
                 </button>
               )}
@@ -414,6 +547,17 @@ const PersonCard = ({
           {!editMode && lifeLine && <p className="pc-life">{lifeLine}</p>}
           <div className="pc-chips">
             {editMode && <span className="pz-tag pz-tag--accent pz-tag--dot">{t('Édition')}</span>}
+            {editMode && siblingPlace && (
+              <span className="pz-tag pc-order" role="group" aria-label={t('Place {n} sur {total} parmi les frères et sœurs', { n: siblingPlace.index + 1, total: siblingPlace.count })}>
+                <button type="button" className="pc-order-btn" onClick={() => onMoveSibling?.(-1)} disabled={siblingPlace.index === 0} aria-label={t('Déplacer à gauche')} title={t('Déplacer à gauche')}>
+                  <ChevronLeft size={15} strokeWidth={2} aria-hidden="true" />
+                </button>
+                <span className="pc-order-label" aria-hidden="true">{siblingPlace.index + 1}/{siblingPlace.count}</span>
+                <button type="button" className="pc-order-btn" onClick={() => onMoveSibling?.(1)} disabled={siblingPlace.index === siblingPlace.count - 1} aria-label={t('Déplacer à droite')} title={t('Déplacer à droite')}>
+                  <ChevronRight size={15} strokeWidth={2} aria-hidden="true" />
+                </button>
+              </span>
+            )}
             {!editMode && ageLabel && <span className="pz-tag">{ageLabel}</span>}
             {!editMode && person.profession && <span className="pz-tag">{person.profession}</span>}
           </div>
@@ -426,6 +570,9 @@ const PersonCard = ({
       <div className="pz-tabs pc-tabs" role="tablist">
         <button type="button" role="tab" aria-selected={tab === 'medias'} className="pz-tab" onClick={() => setTab('medias')}>
           {t('Souvenirs')}{personMedias.length > 0 ? ` · ${personMedias.length}` : ''}
+        </button>
+        <button type="button" role="tab" aria-selected={tab === 'vie'} className="pz-tab" onClick={() => setTab('vie')}>
+          {t('Vie')}
         </button>
         <button type="button" role="tab" aria-selected={tab === 'infos'} className="pz-tab" onClick={() => setTab('infos')}>
           {t('Infos')}
@@ -510,6 +657,24 @@ const PersonCard = ({
           </div>
         )}
 
+        {/* ── Vie ── */}
+        {tab === 'vie' && (
+          <LifeTimeline
+            person={person}
+            family={lifeFamily}
+            life={lifeState.personId === person.id ? lifeState.data : null}
+            loading={lifeState.personId !== person.id || lifeState.loading}
+            failed={lifeState.personId === person.id && lifeState.failed}
+            medias={personMedias}
+            canAdd={canAddMoment}
+            canEdit={canEditMoments}
+            notice={lifeNotice}
+            onAdd={() => { setLifeNotice(''); setMomentSheet({ entry: null }) }}
+            onEdit={(entry) => { setLifeNotice(''); setMomentSheet({ entry }) }}
+            onOpenMedia={(media) => onMediaSelect?.(media, person)}
+          />
+        )}
+
         {/* ── Infos ── */}
         {tab === 'infos' && (
           <div className="pc-infos">
@@ -523,7 +688,7 @@ const PersonCard = ({
                 {(person.birthPlace || editMode) && (
                   <div className="pc-row">
                     <span className="pc-label">{t('Lieu')}</span>
-                    {renderEditableValue({ field: 'birthPlace', value: person.birthPlace || '', placeholder: t('Lieu de naissance') })}
+                    {renderEditableValue({ field: 'birthPlace', value: person.birthPlace || '', placeholder: t('Lieu de naissance'), format: formatPlace })}
                   </div>
                 )}
                 {(person.birthName || editMode) && (
@@ -548,7 +713,7 @@ const PersonCard = ({
                 {(!getEditValue('isAlive', person.isAlive) || (!editMode && !person.isAlive)) && (
                   <div className="pc-row">
                     <span className="pc-label">{t('Décès')}</span>
-                    {renderEditableValue({ field: 'deathYear', value: person.deathDate || person.deathYear || '', placeholder: t('Date de décès'), type: 'date' })}
+                    {renderEditableValue({ field: 'deathYear', value: person.deathDate || person.deathYear || '', placeholder: t('Date de décès'), type: 'date', emptyLabel: t('Date inconnue') })}
                   </div>
                 )}
                 {!editMode && (
@@ -700,6 +865,56 @@ const PersonCard = ({
             </>
           )}
         </footer>
+      )}
+
+      {/* ── Choix de la source du portrait (menu contextuel) ── */}
+      {showSourceMenu && (
+        createPortal(
+          <>
+            <div className="pc-source-backdrop" onClick={() => setShowSourceMenu(false)} />
+            <div className="pc-source-menu pz-menu" role="menu" aria-label={t('Source du portrait')} style={{ top: `${sourceMenuPos.top}px`, left: `${sourceMenuPos.left}px` }}>
+              <button type="button" role="menuitem" className="pz-menu-item" onClick={chooseFileSource}>
+                <ImagePlus size={16} aria-hidden="true" /> {t('Depuis un fichier')}
+              </button>
+              <button type="button" role="menuitem" className="pz-menu-item" onClick={chooseImmichSource}>
+                <Sparkles size={16} aria-hidden="true" /> {t('Depuis Immich')}
+              </button>
+            </div>
+          </>,
+          document.body,
+        )
+      )}
+
+      {/* ── Association d'un visage Immich (modale) ── */}
+      {showImmichPanel && treeId && (
+        <ImmichFacePanel
+          person={person}
+          treeId={treeId}
+          token={immichToken}
+          onClose={() => setShowImmichPanel(false)}
+          onImmichChange={onImmichChange}
+        />
+      )}
+
+      {/* ── Ajouter ou modifier un moment de l'onglet Vie (modale) ── */}
+      {momentSheet && canAddMoment && (
+        <MomentSheet
+          person={person}
+          entry={momentSheet.entry}
+          treeId={treeId}
+          token={immichToken}
+          medias={personMedias}
+          isAdmin={canEditMoments}
+          onUploadFile={onUploadMomentFile}
+          onClose={() => setMomentSheet(null)}
+          onSaved={({ pending, uploaded }) => {
+            setMomentSheet(null)
+            if (pending) setLifeNotice(t('Merci, c’est envoyé. Le moment apparaîtra dans sa vie quand la personne qui gère l’arbre l’aura accepté.'))
+            // Nouveaux souvenirs : la fiche les recharge, puis la frise se relit
+            if (uploaded && !pending) onMomentSaved?.(person.id)
+            setLifeRevision((r) => r + 1)
+          }}
+        />
       )}
     </div>
   )

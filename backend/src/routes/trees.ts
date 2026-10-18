@@ -11,9 +11,12 @@ import { removeStoredFile } from '../lib/media-files.js'
 import { matchSharePassword } from '../lib/password-variants.js'
 import { decryptSharePassword, encryptSharePassword } from '../lib/share-password.js'
 import { purgeTrees } from '../lib/tree-purge.js'
+import { nextSiblingOrder } from '../lib/sibling-order.js'
 import { reserveTreeUnlockAttempt, serializePasswordCheck } from '../lib/unlock-guard.js'
 import type { MembershipRole } from '../types/auth.js'
 import { findParentChildValidationError, findUnionValidationError } from '../utils/relationship-guards.js'
+import { personPrecisionResets, unionPrecisionResets } from '../lib/date-precision.js'
+import { ContributionRouteError, resolveSubmissionContext } from './contributions.js'
 
 const MAX_TREES_PER_ACCOUNT = 10
 
@@ -86,6 +89,7 @@ const createPersonSchema = z.object({
   birthName: z.string().max(120).optional().nullable(),
   birthDate: z.string().regex(isoDateRegex).optional().nullable(),
   deathDate: z.string().regex(isoDateRegex).optional().nullable(),
+  isDeceased: z.boolean().optional(),
   birthPlace: z.string().max(200).optional().nullable(),
   profession: z.string().max(200).optional().nullable(),
   region: z.string().max(120).optional().nullable(),
@@ -101,6 +105,7 @@ const patchPersonSchema = z
     birthName: z.string().max(120).optional().nullable(),
     birthDate: z.string().regex(isoDateRegex).optional().nullable(),
     deathDate: z.string().regex(isoDateRegex).optional().nullable(),
+    isDeceased: z.boolean().optional(),
     birthPlace: z.string().max(200).optional().nullable(),
     profession: z.string().max(200).optional().nullable(),
     region: z.string().max(120).optional().nullable(),
@@ -154,6 +159,54 @@ const patchParentChildLinkSchema = z
     message: 'at_least_one_field_required',
   })
 
+// Moments de l'onglet Vie (« Ajouter un moment »). Un administrateur ajoute, modifie, supprime ; la famille
+// propose, et son moment attend la relecture comme un souvenir. Naissance, décès et mariage gardent leur date
+// et leur lieu sur la personne ou l'union : leur ligne ne porte que des sources, une note et des souvenirs.
+const LIFE_EVENT_PRECISIONS = ['about', 'estimated', 'calculated', 'before', 'after', 'between', 'from', 'to', 'interpreted'] as const
+const RESERVED_LIFE_EVENT_TYPES = new Set(['birth', 'death', 'marriage'])
+const lifeEventDateRegex = /^\d{4}(-\d{2}-\d{2})?$/
+const lifeEventPayloadSchema = z.object({
+  type: z.string().trim().min(1).max(40).regex(/^[a-z_]+$/).default('custom'),
+  unionId: z.string().min(1).nullable().optional(),
+  label: z.string().trim().max(120).nullable().optional(),
+  description: z.string().trim().max(1000).nullable().optional(),
+  date: z.string().regex(lifeEventDateRegex).nullable().optional(),
+  dateEnd: z.string().regex(lifeEventDateRegex).nullable().optional(),
+  datePrecision: z.enum(LIFE_EVENT_PRECISIONS).nullable().optional(),
+  place: z.string().trim().max(300).nullable().optional(),
+  notes: z.string().trim().max(4000).nullable().optional(),
+  sources: z.string().trim().max(4000).nullable().optional(),
+  // Souvenirs déjà dans la fiche à rattacher au moment (les nouveaux fichiers s'envoient ensuite avec lifeEventId)
+  mediaIds: z.array(z.string().min(1)).max(50).optional(),
+  submittedByLabel: z.string().trim().min(1).max(120).optional(),
+})
+const lifeEventPatchSchema = lifeEventPayloadSchema.omit({ type: true, unionId: true, submittedByLabel: true }).partial()
+const lifeEventParamsSchema = z.object({ id: z.string().min(1), eventId: z.string().min(1) })
+
+const lifeEventDate = (value: string | null | undefined) => {
+  if (value === undefined) return undefined
+  if (!value) return null
+  return new Date(`${value.length === 4 ? `${value}-01-01` : value}T00:00:00.000Z`)
+}
+const emptyToNull = (value: string | null | undefined) => (value === undefined ? undefined : value?.trim() ? value.trim() : null)
+
+function lifeEventData(payload: z.infer<typeof lifeEventPatchSchema>, reserved: boolean) {
+  const common = { notes: emptyToNull(payload.notes), sources: emptyToNull(payload.sources) }
+  // Naissance, décès, mariage : rien d'autre que les sources et la note
+  if (reserved) return common
+  return {
+    ...common,
+    label: emptyToNull(payload.label),
+    description: emptyToNull(payload.description),
+    date: lifeEventDate(payload.date),
+    dateEnd: lifeEventDate(payload.dateEnd),
+    datePrecision: payload.datePrecision,
+    // Saisi dans l'app : pas de texte GEDCOM d'origine à garder
+    dateText: null,
+    place: emptyToNull(payload.place),
+  }
+}
+
 const personParamsSchema = z.object({
   id: z.string().min(1),
   personId: z.string().min(1),
@@ -167,6 +220,19 @@ const unionParamsSchema = z.object({
 const linkParamsSchema = z.object({
   id: z.string().min(1),
   linkId: z.string().min(1),
+})
+
+// Ordre d'une fratrie : pour chaque enfant, dans l'ordre voulu, les liens qui le rattachent à ses parents
+const childrenOrderSchema = z.object({
+  order: z
+    .array(
+      z.object({
+        childId: z.string().min(1),
+        linkIds: z.array(z.string().min(1)).min(1).max(4),
+      }),
+    )
+    .min(2)
+    .max(200),
 })
 
 function requireUser(request: FastifyRequest, reply: FastifyReply): { userId: string; email: string } | null {
@@ -1246,6 +1312,8 @@ export const treeRoutes: FastifyPluginAsync = async (app) => {
         birthName: toTrimmedStringOrNull(payload.data.birthName),
         birthDate: toDateOrNull(payload.data.birthDate),
         deathDate: toDateOrNull(payload.data.deathDate),
+        // Une date de décès dit déjà que la personne est décédée : le drapeau ne sert que sans date
+        isDeceased: !payload.data.deathDate && Boolean(payload.data.isDeceased),
         birthPlace: toTrimmedStringOrNull(payload.data.birthPlace),
         profession: toTrimmedStringOrNull(payload.data.profession),
         region: toTrimmedStringOrNull(payload.data.region),
@@ -1302,6 +1370,7 @@ export const treeRoutes: FastifyPluginAsync = async (app) => {
       birthName?: string | null
       birthDate?: Date | null
       deathDate?: Date | null
+      isDeceased?: boolean
       birthPlace?: string | null
       profession?: string | null
       region?: string | null
@@ -1331,6 +1400,14 @@ export const treeRoutes: FastifyPluginAsync = async (app) => {
       data.deathDate = toDateOrNull(payload.data.deathDate)
     }
 
+    if (payload.data.isDeceased !== undefined) {
+      data.isDeceased = payload.data.isDeceased
+    }
+    // Avec une date de décès, le drapeau « sans date » n'a plus lieu d'être
+    if (data.deathDate) {
+      data.isDeceased = false
+    }
+
     if (payload.data.birthPlace !== undefined) {
       data.birthPlace = toTrimmedStringOrNull(payload.data.birthPlace)
     }
@@ -1357,13 +1434,21 @@ export const treeRoutes: FastifyPluginAsync = async (app) => {
 
     data.updatedBy = user.userId
 
+    const datesChanged = data.birthDate !== undefined || data.deathDate !== undefined
+    const current = datesChanged
+      ? await app.prisma.person.findFirst({
+        where: { id: params.data.personId, treeId: params.data.id, deletedAt: null },
+        select: { birthDate: true, deathDate: true },
+      })
+      : null
+
     const updated = await app.prisma.person.updateMany({
       where: {
         id: params.data.personId,
         treeId: params.data.id,
         deletedAt: null,
       },
-      data,
+      data: { ...data, ...personPrecisionResets(current, data) },
     })
 
     if (updated.count === 0) {
@@ -1572,6 +1657,7 @@ export const treeRoutes: FastifyPluginAsync = async (app) => {
       select: {
         partner1PersonId: true,
         partner2PersonId: true,
+        startDate: true,
       },
     })
 
@@ -1622,6 +1708,7 @@ export const treeRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: unionValidationError })
     }
 
+    const startDate = payload.data.startDate !== undefined ? toDateOrNull(payload.data.startDate) : undefined
     const updated = await app.prisma.union.updateMany({
       where: {
         id: params.data.unionId,
@@ -1629,10 +1716,11 @@ export const treeRoutes: FastifyPluginAsync = async (app) => {
         deletedAt: null,
       },
       data: {
+        ...unionPrecisionResets(existingUnion, { startDate }),
         partner1PersonId: payload.data.partner1PersonId,
         partner2PersonId: payload.data.partner2PersonId,
         unionType: payload.data.unionType,
-        startDate: payload.data.startDate !== undefined ? toDateOrNull(payload.data.startDate) : undefined,
+        startDate,
         endDate: payload.data.endDate !== undefined ? toDateOrNull(payload.data.endDate) : undefined,
         displayOrder: payload.data.displayOrder,
       },
@@ -1804,7 +1892,7 @@ export const treeRoutes: FastifyPluginAsync = async (app) => {
         childPersonId: payload.data.childPersonId,
         viaUnionId: payload.data.viaUnionId ?? null,
         parentageType: payload.data.parentageType ?? 'biologique',
-        displayOrder: payload.data.displayOrder ?? 1,
+        displayOrder: payload.data.displayOrder ?? await nextSiblingOrder(app.prisma, params.data.id, payload.data.parentPersonId),
       },
     })
 
@@ -1977,6 +2065,273 @@ export const treeRoutes: FastifyPluginAsync = async (app) => {
     })
 
     return reply.send({ link })
+  })
+
+  // Réordonner une fratrie : displayOrder des liens parent-enfant réécrit en une transaction
+  // Souvenirs rattachables : approuvés, d'une de ces personnes, dans cet arbre
+  const validLifeEventMedia = async (treeId: string, ownerIds: string[], mediaIds: string[] | undefined) => {
+    if (!mediaIds?.length) return true
+    const unique = [...new Set(mediaIds)]
+    const count = await app.prisma.mediaItem.count({ where: { id: { in: unique }, treeId, personId: { in: ownerIds }, status: 'approved', deletedAt: null } })
+    return count === unique.length
+  }
+
+  // Rattache exactement ces souvenirs au moment (et détache ceux qui ne sont plus dans la liste)
+  const setLifeEventMedia = async (treeId: string, eventId: string, mediaIds: string[] | undefined) => {
+    if (mediaIds === undefined) return
+    const unique = [...new Set(mediaIds)]
+    await app.prisma.mediaItem.updateMany({ where: { treeId, lifeEventId: eventId, id: { notIn: unique } }, data: { lifeEventId: null } })
+    if (unique.length) await app.prisma.mediaItem.updateMany({ where: { treeId, id: { in: unique } }, data: { lifeEventId: eventId } })
+  }
+
+  app.post('/trees/:id/persons/:personId/life/events', async (request, reply) => {
+    const actor = request.actor
+    if (!actor) return reply.code(401).send({ error: 'authentication_required' })
+    const params = personParamsSchema.safeParse(request.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const payload = lifeEventPayloadSchema.safeParse(request.body ?? {})
+    if (!payload.success) return reply.code(400).send({ error: 'invalid_payload', details: payload.error.flatten() })
+    const reserved = RESERVED_LIFE_EVENT_TYPES.has(payload.data.type)
+    if (!reserved && payload.data.type === 'custom' && !payload.data.label?.trim() && !payload.data.description?.trim()) {
+      return reply.code(400).send({ error: 'invalid_payload' })
+    }
+
+    // Administrateur : visible tout de suite. Famille : une contribution relue, sauf si l'arbre applique tout de suite
+    const membership = actor.kind === 'user' ? await getAdminMembership(app, actor.userId, params.data.id) : null
+    const isAdmin = hasActiveAdminMembership(membership)
+    let contribution: Awaited<ReturnType<typeof resolveSubmissionContext>> | null = null
+    if (!isAdmin) {
+      // Les sources d'une naissance ou d'un mariage restent l'affaire de l'administrateur
+      if (reserved) return reply.code(403).send({ error: 'forbidden' })
+      try {
+        contribution = await resolveSubmissionContext(app, actor, params.data.id)
+      } catch (error) {
+        if (error instanceof ContributionRouteError) return reply.code(error.statusCode).send({ error: error.code })
+        throw error
+      }
+      if (contribution.autoStatus === 'pending') {
+        const pendingCount = await app.prisma.contributionSession.count({ where: { treeId: params.data.id, status: 'pending' } })
+        if (pendingCount >= 200) return reply.code(429).send({ error: 'too_many_pending_contributions' })
+      }
+    }
+
+    const person = await app.prisma.person.findFirst({
+      where: { id: params.data.personId, treeId: params.data.id, deletedAt: null },
+      select: { id: true, firstName: true },
+    })
+    if (!person) return reply.code(404).send({ error: 'person_not_found' })
+
+    // Naissance et décès : une seule ligne par personne ; mariage : une par union de cette personne
+    let unionId: string | null = null
+    let ownerIds = [person.id]
+    if (reserved) {
+      if (payload.data.type === 'marriage') {
+        const union = payload.data.unionId
+          ? await app.prisma.union.findFirst({
+            where: { id: payload.data.unionId, treeId: params.data.id, deletedAt: null, OR: [{ partner1PersonId: person.id }, { partner2PersonId: person.id }] },
+            select: { id: true, partner1PersonId: true, partner2PersonId: true },
+          })
+          : null
+        if (!union) return reply.code(400).send({ error: 'invalid_union_reference' })
+        unionId = union.id
+        ownerIds = [union.partner1PersonId, union.partner2PersonId].filter((id): id is string => Boolean(id))
+      }
+      const existing = await app.prisma.lifeEvent.findFirst({
+        where: { treeId: params.data.id, deletedAt: null, type: payload.data.type, ...(unionId ? { unionId } : { personId: person.id }) },
+        select: { id: true },
+      })
+      if (existing) return reply.code(409).send({ error: 'event_exists', eventId: existing.id })
+    }
+    if (!(await validLifeEventMedia(params.data.id, ownerIds, payload.data.mediaIds))) {
+      return reply.code(400).send({ error: 'invalid_media_reference' })
+    }
+
+    const isPending = contribution?.autoStatus === 'pending'
+    const title = payload.data.label?.trim() || payload.data.description?.trim() || payload.data.type
+    const session = contribution
+      ? await app.prisma.contributionSession.create({
+        data: {
+          treeId: params.data.id,
+          submittedByUserId: contribution.submittedByUserId,
+          submittedByLabel: payload.data.submittedByLabel?.trim() || contribution.submittedByLabel,
+          mode: contribution.mode,
+          status: contribution.autoStatus,
+          title: `Moment pour ${person.firstName}`.slice(0, 120),
+          reviewedAt: isPending ? undefined : new Date(),
+          reviewedBy: isPending ? undefined : contribution.submittedByUserId,
+        },
+      })
+      : null
+
+    const event = await app.prisma.lifeEvent.create({
+      data: {
+        treeId: params.data.id,
+        personId: unionId ? null : person.id,
+        unionId,
+        type: payload.data.type,
+        ...lifeEventData(payload.data, reserved),
+        status: isPending ? 'pending' : 'approved',
+        contributionSessionId: session?.id ?? null,
+      },
+    })
+    await setLifeEventMedia(params.data.id, event.id, payload.data.mediaIds)
+
+    if (session) {
+      await app.prisma.contributionChange.create({
+        data: {
+          sessionId: session.id,
+          entityType: 'life_event',
+          entityId: event.id,
+          action: 'create',
+          afterJson: {
+            personId: person.id, type: event.type, title, date: payload.data.date ?? null, dateEnd: payload.data.dateEnd ?? null,
+            datePrecision: payload.data.datePrecision ?? null, place: event.place, notes: event.notes, sources: event.sources,
+          },
+          decision: isPending ? undefined : 'approved',
+        },
+      })
+    }
+    return reply.code(201).send({ event: { id: event.id, status: event.status } })
+  })
+
+  app.patch('/trees/:id/life/events/:eventId', async (request, reply) => {
+    const user = requireUser(request, reply)
+    if (!user) return
+    const params = lifeEventParamsSchema.safeParse(request.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const payload = lifeEventPatchSchema.safeParse(request.body ?? {})
+    if (!payload.success) return reply.code(400).send({ error: 'invalid_payload', details: payload.error.flatten() })
+
+    const membership = await getAdminMembership(app, user.userId, params.data.id)
+    if (!hasActiveAdminMembership(membership)) return reply.code(403).send({ error: 'forbidden' })
+
+    const existing = await app.prisma.lifeEvent.findFirst({
+      where: { id: params.data.eventId, treeId: params.data.id, deletedAt: null, status: 'approved' },
+      select: { personId: true, unionId: true, type: true },
+    })
+    if (!existing) return reply.code(404).send({ error: 'event_not_found' })
+
+    // Souvenirs d'une ligne de mariage : ceux de l'un ou l'autre conjoint
+    let ownerIds: string[] = existing.personId ? [existing.personId] : []
+    if (existing.unionId) {
+      const union = await app.prisma.union.findFirst({ where: { id: existing.unionId, treeId: params.data.id }, select: { partner1PersonId: true, partner2PersonId: true } })
+      ownerIds = [union?.partner1PersonId, union?.partner2PersonId].filter((id): id is string => Boolean(id))
+    }
+    if (!(await validLifeEventMedia(params.data.id, ownerIds, payload.data.mediaIds))) {
+      return reply.code(400).send({ error: 'invalid_media_reference' })
+    }
+
+    await app.prisma.lifeEvent.update({
+      where: { id: params.data.eventId },
+      data: lifeEventData(payload.data, RESERVED_LIFE_EVENT_TYPES.has(existing.type)),
+    })
+    await setLifeEventMedia(params.data.id, params.data.eventId, payload.data.mediaIds)
+    return reply.send({ ok: true })
+  })
+
+  app.delete('/trees/:id/life/events/:eventId', async (request, reply) => {
+    const user = requireUser(request, reply)
+    if (!user) return
+    const params = lifeEventParamsSchema.safeParse(request.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const membership = await getAdminMembership(app, user.userId, params.data.id)
+    if (!hasActiveAdminMembership(membership)) return reply.code(403).send({ error: 'forbidden' })
+
+    const deleted = await app.prisma.lifeEvent.updateMany({
+      where: { id: params.data.eventId, treeId: params.data.id, deletedAt: null, personId: { not: null }, type: { notIn: [...RESERVED_LIFE_EVENT_TYPES] } },
+      data: { deletedAt: new Date() },
+    })
+    if (deleted.count === 0) return reply.code(404).send({ error: 'event_not_found' })
+    // Les souvenirs restent dans la fiche, simplement détachés du moment
+    await app.prisma.mediaItem.updateMany({ where: { treeId: params.data.id, lifeEventId: params.data.eventId }, data: { lifeEventId: null } })
+    return reply.code(204).send()
+  })
+
+  app.put('/trees/:id/links/order', async (request, reply) => {
+    const user = requireUser(request, reply)
+    if (!user) {
+      return
+    }
+
+    const params = treeIdParamSchema.safeParse(request.params)
+    if (!params.success) {
+      return reply.code(400).send({ error: 'invalid_params' })
+    }
+
+    const payload = childrenOrderSchema.safeParse(request.body)
+    if (!payload.success) {
+      return reply.code(400).send({ error: 'invalid_payload', details: payload.error.flatten() })
+    }
+
+    const membership = await getAdminMembership(app, user.userId, params.data.id)
+    if (!hasActiveAdminMembership(membership)) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    const childIds = payload.data.order.map((entry) => entry.childId)
+    const linkIds = payload.data.order.flatMap((entry) => entry.linkIds)
+    if (new Set(childIds).size !== childIds.length || new Set(linkIds).size !== linkIds.length) {
+      return reply.code(400).send({ error: 'invalid_payload' })
+    }
+
+    const links = await app.prisma.parentChildLink.findMany({
+      where: { id: { in: linkIds }, treeId: params.data.id, deletedAt: null },
+      select: { id: true, parentPersonId: true, childPersonId: true, viaUnionId: true },
+    })
+    const linkById = new Map(links.map((link) => [link.id, link]))
+    if (links.length !== linkIds.length) {
+      return reply.code(404).send({ error: 'link_not_found' })
+    }
+
+    // Chaque lien appartient bien à son enfant, et les enfants partagent au moins un parent
+    const parentSets: Set<string>[] = []
+    for (const entry of payload.data.order) {
+      const parents = new Set<string>()
+      for (const linkId of entry.linkIds) {
+        const link = linkById.get(linkId)
+        if (!link || link.childPersonId !== entry.childId) {
+          return reply.code(400).send({ error: 'invalid_link_reference' })
+        }
+        parents.add(link.parentPersonId)
+      }
+      parentSets.push(parents)
+    }
+    const hasSharedParent = [...parentSets[0]].some((parentId) => parentSets.every((parents) => parents.has(parentId)))
+    if (!hasSharedParent) {
+      return reply.code(400).send({ error: 'not_siblings' })
+    }
+
+    // L'arbre ne montre qu'un lien par enfant et par union : le lien vers l'autre parent de la même union
+    // prend le même ordre, pour que les deux restent d'accord
+    await app.prisma.$transaction(
+      payload.data.order.map((entry, index) => {
+        const unionIds = [...new Set(entry.linkIds.map((id) => linkById.get(id)?.viaUnionId).filter((id): id is string => Boolean(id)))]
+        return app.prisma.parentChildLink.updateMany({
+          where: {
+            treeId: params.data.id,
+            deletedAt: null,
+            childPersonId: entry.childId,
+            OR: [{ id: { in: entry.linkIds } }, ...(unionIds.length ? [{ viaUnionId: { in: unionIds } }] : [])],
+          },
+          data: { displayOrder: index + 1 },
+        })
+      }),
+    )
+
+    await app.prisma.auditLog.create({
+      data: {
+        treeId: params.data.id,
+        actorType: 'user',
+        actorId: user.userId,
+        action: 'children_reordered',
+        entityType: 'parent_child_link',
+        entityId: payload.data.order[0].linkIds[0],
+        payloadJson: { childIds },
+      },
+    })
+
+    return reply.send({ ok: true })
   })
 
   app.delete('/trees/:id/links/:linkId', async (request, reply) => {

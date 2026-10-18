@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { adoptedFamilies, familyExtras, personExtras } from '../src/lib/gedcom-events'
+import { indexGedcomRecords } from '../src/lib/gedcom-photos'
+import { parseGedcom } from '../src/routes/gedcom'
 
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
@@ -66,6 +69,14 @@ const { prismaMock } = vi.hoisted(() => ({
       findFirst: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
+    },
+    lifeEvent: {
+      findFirst: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     annotation: {
       findMany: vi.fn(),
@@ -495,6 +506,110 @@ describe('Graph routes', () => {
     await app.close()
   })
 
+  it('frise de vie : lisible avec un accès à l’arbre, refusée pour un autre arbre, 404 pour une personne inconnue', async () => {
+    const app = createApp()
+    await app.ready()
+    const sign = (treeId: string) => (app as any).jwt.sign({
+      kind: 'tree_access',
+      sub: `tree:${treeId}:visitor`,
+      treeId,
+      role: 'visitor',
+      accessVersion: new Date('2026-02-11T10:00:00.000Z').getTime(),
+    })
+
+    prismaMock.tree.findFirst.mockResolvedValue({ id: 'tree-1', rootPersonId: null })
+    prismaMock.person.findFirst.mockResolvedValue({
+      id: 'p-1', birthDatePrecision: 'about', birthDateEnd: null, deathDatePrecision: null, deathDateEnd: null,
+      deathPlace: 'Nantes, France', nickname: 'Loulou',
+    })
+    prismaMock.union.findMany.mockResolvedValue([
+      { id: 'u-1', partner1PersonId: 'p-1', partner2PersonId: 'p-2', startDate: new Date('1905-01-01T00:00:00Z'), startPlace: 'Limoges', startDatePrecision: 'estimated', endDate: null },
+    ])
+    prismaMock.lifeEvent.findMany.mockResolvedValue([
+      { id: 'e-1', personId: 'p-1', unionId: null, type: 'baptism', label: null, date: new Date('1879-03-09T00:00:00Z'), dateEnd: null, datePrecision: null, dateText: null, place: 'La Roche-sur-Yon', description: null, notes: null, sources: 'Registre', displayOrder: 1 },
+    ])
+
+    const ok = await app.inject({ method: 'GET', url: '/trees/tree-1/persons/p-1/life', headers: { authorization: `Bearer ${sign('tree-1')}` } })
+    expect(ok.statusCode).toBe(200)
+    expect(ok.json()).toMatchObject({
+      person: { birthDatePrecision: 'about', deathPlace: 'Nantes, France', nickname: 'Loulou' },
+      unions: [{ id: 'u-1', partnerId: 'p-2', startDate: '1905-01-01', startPlace: 'Limoges', startDatePrecision: 'estimated' }],
+      events: [{ id: 'e-1', type: 'baptism', date: '1879-03-09', place: 'La Roche-sur-Yon', sources: 'Registre' }],
+    })
+
+    const other = await app.inject({ method: 'GET', url: '/trees/tree-1/persons/p-1/life', headers: { authorization: `Bearer ${sign('tree-2')}` } })
+    expect(other.statusCode).toBe(403)
+
+    prismaMock.person.findFirst.mockResolvedValue(null)
+    const missing = await app.inject({ method: 'GET', url: '/trees/tree-1/persons/p-404/life', headers: { authorization: `Bearer ${sign('tree-1')}` } })
+    expect(missing.statusCode).toBe(404)
+
+    const anonymous = await app.inject({ method: 'GET', url: '/trees/tree-1/persons/p-1/life' })
+    expect(anonymous.statusCode).toBe(401)
+    await app.close()
+  })
+
+  it('export GEDCOM : précisions, événements, sources et adoption relus à l’identique', async () => {
+    const app = createApp()
+    await app.ready()
+    const token = (app as any).jwt.sign({
+      kind: 'tree_access',
+      sub: 'tree:tree-1:visitor',
+      treeId: 'tree-1',
+      role: 'visitor',
+      accessVersion: new Date('2026-02-11T10:00:00.000Z').getTime(),
+    })
+    const base = { birthDateEnd: null, deathDateEnd: null, deathDatePrecision: null, deathPlace: null, nickname: null, notes: null, profession: null, deathDate: null }
+    prismaMock.tree.findFirst.mockResolvedValue({ id: 'tree-1', name: 'Ragot', rootPersonId: null })
+    prismaMock.person.findMany.mockResolvedValue([
+      { ...base, id: 'p-1', firstName: 'Louis', lastName: 'Ragot', sex: 'male', birthDate: new Date('1879-01-01T00:00:00Z'), birthDatePrecision: 'about', birthPlace: 'La Roche-sur-Yon', deathDate: new Date('1950-05-02T00:00:00Z'), deathPlace: 'Nantes', nickname: 'Loulou', profession: 'Instituteur' },
+      { ...base, id: 'p-2', firstName: 'Marie', lastName: 'Bodin', sex: 'female', birthDate: null, birthDatePrecision: null, birthPlace: null, isDeceased: true },
+      { ...base, id: 'p-3', firstName: 'Jean', lastName: 'Ragot', sex: 'male', birthDate: null, birthDatePrecision: null, birthPlace: null },
+    ])
+    prismaMock.union.findMany.mockResolvedValue([
+      { id: 'u-1', partner1PersonId: 'p-1', partner2PersonId: 'p-2', startDate: new Date('1905-01-01T00:00:00Z'), startDatePrecision: 'estimated', startPlace: 'Limoges', endDate: null },
+    ])
+    prismaMock.parentChildLink.findMany.mockResolvedValue([
+      { id: 'l-1', parentPersonId: 'p-1', childPersonId: 'p-3', viaUnionId: 'u-1', parentageType: 'adoption' },
+      { id: 'l-2', parentPersonId: 'p-2', childPersonId: 'p-3', viaUnionId: 'u-1', parentageType: 'adoption' },
+    ])
+    const event = { label: null, dateEnd: null, datePrecision: null, dateText: null, place: null, description: null, notes: null, sources: null, displayOrder: 1 }
+    prismaMock.lifeEvent.findMany.mockResolvedValue([
+      { ...event, id: 'e-1', personId: 'p-1', unionId: null, type: 'birth', date: null, sources: 'Registre des naissances, Acte n° 12' },
+      { ...event, id: 'e-2', personId: 'p-1', unionId: null, type: 'baptism', date: new Date('1879-03-09T00:00:00Z'), place: 'La Roche-sur-Yon' },
+      { ...event, id: 'e-3', personId: 'p-1', unionId: null, type: 'occupation', date: new Date('1900-01-01T00:00:00Z'), dateEnd: new Date('1935-01-01T00:00:00Z'), datePrecision: 'from', description: 'Instituteur' },
+      { ...event, id: 'e-4', personId: 'p-1', unionId: null, type: 'custom', label: 'Militaire', date: new Date('1914-01-01T00:00:00Z'), dateEnd: new Date('1918-01-01T00:00:00Z'), datePrecision: 'between', notes: 'Blessé à Verdun.\nRentré en 1919.' },
+      { ...event, id: 'e-6', personId: null, unionId: 'u-1', type: 'marriage', date: null, sources: 'Registre des mariages de Limoges' },
+      { ...event, id: 'e-7', personId: null, unionId: 'u-1', type: 'divorce', date: new Date('1920-06-01T00:00:00Z') },
+    ])
+
+    const response = await app.inject({ method: 'GET', url: '/trees/tree-1/export/gedcom', headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(200)
+    const text = response.body.replace(/\r\n/g, '\n')
+    expect(text).toContain('1 OCCU Instituteur\n2 DATE FROM 1900 TO 1935')
+    expect(text.match(/1 OCCU/g)).toHaveLength(1)
+    expect(text).toContain('2 PEDI adopted')
+    // Décédée sans date (issue #77) : la forme courte de la norme
+    expect(text).toContain('1 NAME Marie /Bodin/\n1 SEX F\n1 DEAT Y\n')
+
+    const roots = parseGedcom(text)
+    const records = indexGedcomRecords(roots)
+    const louis = roots.find((n) => n.tag === 'INDI' && n.children.some((c) => c.tag === 'NAME' && c.value.startsWith('Louis')))!
+    const extras = personExtras(louis as never, records)
+    expect(extras).toMatchObject({ birthDatePrecision: 'about', deathPlace: 'Nantes', nickname: 'Loulou' })
+    expect(extras.events.map((e) => e.type)).toEqual(['birth', 'baptism', 'occupation', 'custom'])
+    expect(extras.events[0].sources).toBe('Registre des naissances, Acte n° 12')
+    expect(extras.events[3]).toMatchObject({ label: 'Militaire', datePrecision: 'between', notes: 'Blessé à Verdun.\nRentré en 1919.' })
+
+    const fam = roots.find((n) => n.tag === 'FAM')!
+    const family = familyExtras(fam as never, records)
+    expect(family).toMatchObject({ startPlace: 'Limoges', startDatePrecision: 'estimated' })
+    expect(family.events.map((e) => e.type)).toEqual(['marriage', 'divorce'])
+    const jean = roots.find((n) => n.tag === 'INDI' && n.children.some((c) => c.tag === 'NAME' && c.value.startsWith('Jean')))!
+    expect(adoptedFamilies(jean as never).size).toBe(1)
+    await app.close()
+  })
+
   it('allows tree access token to fetch graph', async () => {
     const app = createApp()
     await app.ready()
@@ -590,6 +705,126 @@ describe('Graph routes', () => {
     expect(response.statusCode).toBe(200)
     await vi.waitFor(() => expect(prismaMock.treeVisit.findFirst).toHaveBeenCalled())
     expect(prismaMock.treeVisit.create).not.toHaveBeenCalled()
+    await app.close()
+  })
+})
+
+describe('Décès sans date (issue #77)', () => {
+  it('marque décédé sans date, et une date de décès retire le drapeau', async () => {
+    const app = createApp()
+    const token = await createUserToken(app)
+    const patch = (payload: object) => app.inject({ method: 'PATCH', url: '/trees/tree-1/persons/person-1', headers: { authorization: `Bearer ${token}` }, payload })
+
+    expect((await patch({ isDeceased: true })).statusCode).toBe(200)
+    expect(prismaMock.person.updateMany.mock.calls.at(-1)[0].data).toMatchObject({ isDeceased: true })
+
+    expect((await patch({ deathDate: '1950-01-01', isDeceased: true })).statusCode).toBe(200)
+    expect(prismaMock.person.updateMany.mock.calls.at(-1)[0].data).toMatchObject({ isDeceased: false, deathDate: new Date('1950-01-01T00:00:00.000Z') })
+
+    expect((await patch({ isDeceased: false, deathDate: null })).statusCode).toBe(200)
+    expect(prismaMock.person.updateMany.mock.calls.at(-1)[0].data).toMatchObject({ isDeceased: false, deathDate: null })
+    await app.close()
+  })
+})
+
+describe('Moments de l’onglet Vie', () => {
+  it('un admin ajoute un moment avec deux souvenirs, le modifie sans changer son type, le supprime', async () => {
+    const app = createApp()
+    const token = await createUserToken(app)
+    const auth = { authorization: `Bearer ${token}` }
+    prismaMock.mediaItem.count.mockResolvedValue(2)
+    prismaMock.mediaItem.updateMany.mockResolvedValue({ count: 2 })
+    prismaMock.lifeEvent.create.mockResolvedValue({ id: 'e-1', status: 'approved' })
+
+    const created = await app.inject({
+      method: 'POST', url: '/trees/tree-1/persons/person-1/life/events', headers: auth,
+      payload: { label: 'Mariage à la mairie', date: '1940', datePrecision: 'about', place: 'Limoges', mediaIds: ['m-1', 'm-2'] },
+    })
+    expect(created.statusCode).toBe(201)
+    expect(created.json()).toEqual({ event: { id: 'e-1', status: 'approved' } })
+    expect(prismaMock.lifeEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+      treeId: 'tree-1', personId: 'person-1', type: 'custom', label: 'Mariage à la mairie', status: 'approved',
+      date: new Date('1940-01-01T00:00:00.000Z'), datePrecision: 'about', place: 'Limoges', contributionSessionId: null,
+    }) })
+    expect(prismaMock.mediaItem.updateMany).toHaveBeenCalledWith({ where: { treeId: 'tree-1', id: { in: ['m-1', 'm-2'] } }, data: { lifeEventId: 'e-1' } })
+    expect(prismaMock.contributionSession.create).not.toHaveBeenCalled()
+
+    prismaMock.lifeEvent.findFirst.mockResolvedValue({ personId: 'person-1', unionId: null, type: 'occupation' })
+    const patched = await app.inject({ method: 'PATCH', url: '/trees/tree-1/life/events/e-1', headers: auth, payload: { place: '', mediaIds: [] } })
+    expect(patched.statusCode).toBe(200)
+    expect(prismaMock.lifeEvent.update).toHaveBeenCalledWith({ where: { id: 'e-1' }, data: expect.objectContaining({ place: null }) })
+    expect(prismaMock.lifeEvent.update.mock.calls[0][0].data).not.toHaveProperty('type')
+    expect(prismaMock.mediaItem.updateMany).toHaveBeenCalledWith({ where: { treeId: 'tree-1', lifeEventId: 'e-1', id: { notIn: [] } }, data: { lifeEventId: null } })
+
+    prismaMock.lifeEvent.updateMany.mockResolvedValue({ count: 1 })
+    const deleted = await app.inject({ method: 'DELETE', url: '/trees/tree-1/life/events/e-1', headers: auth })
+    expect(deleted.statusCode).toBe(204)
+    await app.close()
+  })
+
+  it('naissance : un admin y accroche un acte et une source, une seule ligne par personne, sans date ni lieu', async () => {
+    const app = createApp()
+    const token = await createUserToken(app)
+    const auth = { authorization: `Bearer ${token}` }
+    prismaMock.mediaItem.count.mockResolvedValue(1)
+    prismaMock.lifeEvent.findFirst.mockResolvedValueOnce(null)
+    prismaMock.lifeEvent.create.mockResolvedValue({ id: 'e-b', status: 'approved' })
+    const post = (payload: object) => app.inject({ method: 'POST', url: '/trees/tree-1/persons/person-1/life/events', headers: auth, payload })
+
+    expect((await post({ type: 'birth', sources: 'Registre de Limoges', place: 'ignoré', mediaIds: ['acte'] })).statusCode).toBe(201)
+    const data = prismaMock.lifeEvent.create.mock.calls[0][0].data
+    expect(data).toMatchObject({ type: 'birth', personId: 'person-1', sources: 'Registre de Limoges' })
+    expect(data).not.toHaveProperty('place')
+
+    prismaMock.lifeEvent.findFirst.mockResolvedValueOnce({ id: 'e-b' })
+    expect((await post({ type: 'birth', sources: 'x' })).statusCode).toBe(409)
+
+    prismaMock.lifeEvent.findFirst.mockResolvedValue({ personId: 'person-1', unionId: null, type: 'birth' })
+    expect((await app.inject({ method: 'PATCH', url: '/trees/tree-1/life/events/e-b', headers: auth, payload: { place: 'x', sources: 'Acte 12' } })).statusCode).toBe(200)
+    expect(prismaMock.lifeEvent.update).toHaveBeenCalledWith({ where: { id: 'e-b' }, data: { notes: undefined, sources: 'Acte 12' } })
+    await app.close()
+  })
+
+  it('la famille propose un moment : en attente, dans une contribution relue', async () => {
+    const app = createApp()
+    const token = await createUserToken(app)
+    const auth = { authorization: `Bearer ${token}` }
+    prismaMock.treeMembership.findUnique.mockResolvedValue({ role: 'member', tree: { deletedAt: null, settings: null } })
+    prismaMock.contributionSession.count.mockResolvedValue(0)
+    prismaMock.contributionSession.create.mockResolvedValue({ id: 's-1' })
+    prismaMock.lifeEvent.create.mockResolvedValue({ id: 'e-2', status: 'pending', type: 'custom', place: 'Paris', notes: null, sources: null })
+
+    const created = await app.inject({
+      method: 'POST', url: '/trees/tree-1/persons/person-1/life/events', headers: auth,
+      payload: { label: 'Départ pour Paris', date: '1925', submittedByLabel: 'Hélène' },
+    })
+    expect(created.statusCode).toBe(201)
+    expect(created.json()).toEqual({ event: { id: 'e-2', status: 'pending' } })
+    expect(prismaMock.contributionSession.create).toHaveBeenCalledWith({ data: expect.objectContaining({ status: 'pending', submittedByLabel: 'Hélène' }) })
+    expect(prismaMock.lifeEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ status: 'pending', contributionSessionId: 's-1' }) })
+    expect(prismaMock.contributionChange.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+      sessionId: 's-1', entityType: 'life_event', entityId: 'e-2', action: 'create', afterJson: expect.objectContaining({ title: 'Départ pour Paris' }),
+    }) })
+
+    // La famille ne touche ni aux naissances ni aux moments existants
+    expect((await app.inject({ method: 'POST', url: '/trees/tree-1/persons/person-1/life/events', headers: auth, payload: { type: 'birth', sources: 'x' } })).statusCode).toBe(403)
+    expect((await app.inject({ method: 'PATCH', url: '/trees/tree-1/life/events/e-1', headers: auth, payload: { place: 'x' } })).statusCode).toBe(403)
+    expect((await app.inject({ method: 'DELETE', url: '/trees/tree-1/life/events/e-1', headers: auth })).statusCode).toBe(403)
+    await app.close()
+  })
+
+  it('refuse un souvenir d’une autre personne, un moment sans titre, un mariage sans union de la personne', async () => {
+    const app = createApp()
+    const token = await createUserToken(app)
+    const auth = { authorization: `Bearer ${token}` }
+    const post = (payload: object) => app.inject({ method: 'POST', url: '/trees/tree-1/persons/person-1/life/events', headers: auth, payload })
+
+    prismaMock.mediaItem.count.mockResolvedValue(0)
+    expect((await post({ label: 'Mariage', mediaIds: ['autre'] })).statusCode).toBe(400)
+    expect((await post({ label: '  ' })).statusCode).toBe(400)
+    prismaMock.union.findFirst.mockResolvedValue(null)
+    expect((await post({ type: 'marriage', unionId: 'u-x', sources: 'x' })).statusCode).toBe(400)
+    expect(prismaMock.lifeEvent.create).not.toHaveBeenCalled()
     await app.close()
   })
 })

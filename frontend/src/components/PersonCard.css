@@ -55,6 +55,9 @@
 .pc-photo--add:focus-visible { outline: 2px solid var(--pz-a500); outline-offset: 3px; }
 .pc-photo--add:disabled { opacity: .6; cursor: default; }
 .pc-photo-actions { display: grid; gap: 4px; justify-items: center; }
+/* Menu du choix de source du portrait : au-dessus de la fiche (z-index 1000), sous la modale Immich (2200) */
+.pc-source-backdrop { position: fixed; inset: 0; z-index: 1100; }
+.pc-source-menu { position: fixed; z-index: 1150; min-width: 220px; }
 .pc-photo-btn {
   border: 0; background: none; padding: 2px 4px; cursor: pointer;
   font: 500 12px var(--pz-sans); color: var(--pz-a700); text-decoration: underline; text-underline-offset: 2px;
@@ -66,8 +69,24 @@
 .pc-name { margin: 0; font: 400 28px/1.08 var(--pz-serif); letter-spacing: -.01em; color: var(--pz-ink); text-wrap: balance; }
 .pc-name em { font-style: italic; font-weight: 300; }
 .pc-life { margin: 0; font: 400 13.5px/1.4 var(--pz-sans); color: var(--pz-muted); }
-.pc-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pc-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .pc-chips:empty { display: none; }
+/* Place dans la fratrie (mode édition) : ‹ 2 sur 3 › dans une pastille */
+.pz-tag.pc-order { gap: 0; padding: 1px; }
+.pc-order-label { padding: 0 1px; font-variant-numeric: tabular-nums; }
+.pc-order-btn {
+  display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0;
+  border: 0; border-radius: 999px; background: transparent; color: var(--pz-ink-2); cursor: pointer;
+  transition: transform 140ms var(--pz-ease), background-color 160ms ease, color 160ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.pc-order-btn:active:not(:disabled) { transform: scale(.92); }
+.pc-order-btn:disabled { opacity: .35; cursor: default; }
+.pc-order-btn:focus-visible { outline: 2px solid var(--pz-a500); outline-offset: 1px; }
+@media (hover: hover) and (pointer: fine) {
+  .pc-order-btn:hover:not(:disabled) { background: var(--pz-line-soft); color: var(--pz-ink); }
+}
+@media (pointer: coarse) { .pc-order-btn { width: 32px; height: 32px; } }
 .pc-name-edit { display: grid; gap: 6px; }
 
 /* ── Champs d'édition ── */
@@ -156,6 +175,10 @@
 .pc-label { flex: none; font: 400 13.5px var(--pz-sans); color: var(--pz-muted); }
 .pc-row .value { font: 400 14px/1.4 var(--pz-sans); color: var(--pz-ink); text-align: right; font-variant-numeric: tabular-nums; }
 .pc-row .pc-input { max-width: 62%; text-align: right; }
+/* Date : une année seule ou une date complète (issue #77), avec une aide si le texte n'en est pas une */
+.pc-row .pz-date { justify-items: end; max-width: 62%; }
+.pc-row .pz-date .pc-input { max-width: 100%; }
+.pc-row .pz-date-hint { text-align: right; }
 .pc-note { margin: 0; font: 400 italic 16px/1.5 var(--pz-serif); color: var(--pz-ink-2); white-space: pre-wrap; }
 
 .pc-alive {

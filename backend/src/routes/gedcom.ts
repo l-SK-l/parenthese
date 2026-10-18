@@ -2,8 +2,12 @@ import type { FastifyPluginAsync } from 'fastify'
 import { z } from 'zod'
 
 import { UPLOAD_BODY_LIMIT } from '../config/env.js'
-import { indexObjeRecords, photoPathForPerson } from '../lib/gedcom-photos.js'
+import { parseGedcomDate } from '../lib/gedcom-dates.js'
+import { adoptedFamilies, FAMILY_EVENT_TYPES, familyExtras, PERSON_EVENT_TYPES, personExtras } from '../lib/gedcom-events.js'
+import { indexGedcomRecords, mediaRefsForPerson, photoPathForPerson, plainNoteText } from '../lib/gedcom-photos.js'
+import type { GedcomRecords } from '../lib/gedcom-photos.js'
 import type { MembershipRole } from '../types/auth.js'
+import { nextSiblingOrder } from '../lib/sibling-order.js'
 
 const treeIdParamSchema = z.object({
   id: z.string().min(1),
@@ -22,6 +26,8 @@ const MAX_IMPORTED_FAMILIES = 20000
 // redémarrage pm2 qui suivait effaçait les limites d'essais gardées en mémoire. Au-delà, le fichier est refusé.
 const MAX_GEDCOM_NODES = 300_000
 const MAX_IMPORTED_LINKS = 60_000
+// Fichiers cités renvoyés à l'app pour en faire des souvenirs : au-delà, la réponse deviendrait trop lourde
+const MAX_IMPORTED_MEDIA_REFS = 20_000
 
 class GedcomTooLargeError extends Error {}
 
@@ -32,6 +38,22 @@ function clip(value: string | null, max: number): string | null {
   if (value === null) return null
   const trimmed = value.trim()
   return trimmed ? trimmed.slice(0, max) : null
+}
+
+// Lieu d'un GEDCOM : les logiciels remplissent toutes les colonnes de leur format de lieu, même vides, et y
+// glissent des codes. Heredis écrit « La Roche-sur-Yon,85191,Vendée,Pays de la Loire,France, » (ville, code
+// INSEE, département, région, pays, subdivision). On garde les noms, sans case vide, sans code INSEE ni
+// postal, sans répétition : « La Roche-sur-Yon, Vendée, Pays de la Loire, France ».
+export function cleanGedcomPlace(value: string | null | undefined): string | null {
+  if (!value) return null
+  const parts: string[] = []
+  for (const raw of value.split(',')) {
+    const part = raw.trim()
+    if (!part || /^(\d{4,5}|2[AB]\d{3})$/i.test(part)) continue
+    if (parts.length && parts[parts.length - 1].toLowerCase() === part.toLowerCase()) continue
+    parts.push(part)
+  }
+  return parts.length ? parts.join(', ') : null
 }
 
 // Export : un champ sur une ligne ne doit jamais en créer une autre (enregistrement injecté)
@@ -50,6 +72,9 @@ type GedcomNode = {
   xref?: string
   tag: string
   value: string
+  // Valeur telle qu'écrite, espaces compris : une ligne coupée en CONC se recolle sans rien perdre
+  // (« pendant » + « 2 CONC  trente-cinq ans » ou « pendant  » + « 2 CONC trente-cinq ans »)
+  rawValue?: string
   children: GedcomNode[]
 }
 
@@ -60,20 +85,21 @@ export function parseGedcom(text: string): GedcomNode[] {
   let nodeCount = 0
 
   for (const raw of lines) {
-    const line = raw.trim()
-    if (!line || line.length > MAX_LINE_LENGTH) continue
+    const line = raw.replace(/^[\s﻿]+/, '')
+    if (!line.trim() || line.length > MAX_LINE_LENGTH) continue
     nodeCount += 1
     if (nodeCount > MAX_GEDCOM_NODES) throw new GedcomTooLargeError()
 
-    const match = line.match(/^(\d+)\s+(?:(@[^@]+@)\s+)?(\w+)(?:\s+(.*))?$/)
+    const match = line.match(/^(\d+)\s+(?:(@[^@]+@)\s+)?(\w+)(?:[ \t](.*))?$/)
     if (!match) continue
 
     const level = parseInt(match[1], 10)
     const xref = match[2] ? match[2].slice(1, -1) : undefined
     const tag = match[3]
-    const value = match[4]?.trim() ?? ''
+    const rawValue = match[4] ?? ''
+    const value = rawValue.trim()
 
-    const node: GedcomNode = { level, xref, tag, value, children: [] }
+    const node: GedcomNode = { level, xref, tag, value, rawValue, children: [] }
 
     while (stack.length > 0 && stack[stack.length - 1].level >= level) {
       stack.pop()
@@ -101,36 +127,30 @@ function findAllChildren(node: GedcomNode | undefined, tag: string): GedcomNode[
 
 // ─── Date Conversion ────────────────────────────────────────────────────────
 
-const MONTH_MAP: Record<string, string> = {
-  JAN: '01', FEB: '02', MAR: '03', APR: '04', MAY: '05', JUN: '06',
-  JUL: '07', AUG: '08', SEP: '09', OCT: '10', NOV: '11', DEC: '12',
-}
-
 const MONTHS_ARR = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
 
+// Lecture complète dans lib/gedcom-dates.ts : vers, avant, après, entre, julien, républicain, double année
 function gedcomDateToIso(value: string): string | null {
-  if (!value) return null
-  // Remove qualifiers (ABT, BEF, AFT, EST, CAL, etc.)
-  const cleaned = value.trim().toUpperCase().replace(/^(ABT|BEF|AFT|EST|CAL|INT|FROM|TO|BET|AND)\s+/, '')
+  return parseGedcomDate(value)?.iso ?? null
+}
 
-  // "15 JAN 1900" → "1900-01-15"
-  const ddMmmYyyy = cleaned.match(/^(\d{1,2})\s+([A-Z]{3})\s+(\d{4})$/)
-  if (ddMmmYyyy) {
-    const month = MONTH_MAP[ddMmmYyyy[2]]
-    if (month) return `${ddMmmYyyy[3]}-${month}-${ddMmmYyyy[1].padStart(2, '0')}`
+// Notes d'une personne : écrites sous elle ou partagées (« 1 NOTE @N1@ »), lignes recollées (CONT, CONC),
+// RTF de Heredis Mac nettoyé. Plusieurs notes sont séparées par une ligne vide.
+export function personNotes(indi: GedcomNode, records: GedcomRecords): string | null {
+  const texts: string[] = []
+  for (const note of findAllChildren(indi, 'NOTE')) {
+    const pointer = note.value.match(/^@([^@]+)@$/)?.[1]
+    const source = pointer ? records.note.get(pointer) : note
+    if (!source) continue
+    let text = (pointer ? source.rawValue ?? source.value : note.rawValue ?? note.value)
+    for (const part of source.children) {
+      if (part.tag === 'CONT') text += `\n${part.rawValue ?? part.value}`
+      else if (part.tag === 'CONC') text += part.rawValue ?? part.value
+    }
+    const clean = plainNoteText(text)
+    if (clean) texts.push(clean)
   }
-
-  // "JAN 1900" → "1900-01"
-  const mmmYyyy = cleaned.match(/^([A-Z]{3})\s+(\d{4})$/)
-  if (mmmYyyy) {
-    const month = MONTH_MAP[mmmYyyy[1]]
-    if (month) return `${mmmYyyy[2]}-${month}`
-  }
-
-  // "1900" → "1900"
-  if (/^\d{4}$/.test(cleaned)) return cleaned
-
-  return null
+  return texts.length ? texts.join('\n\n') : null
 }
 
 function isoDateToDbDate(iso: string | null): Date | null {
@@ -158,6 +178,82 @@ function isoToGedcomDate(value: string | Date | null): string | null {
 
   if (/^\d{4}$/.test(str)) return str
   return null
+}
+
+// Date avec sa précision (ABT 1879, BET 1914 AND 1918…). Une date exacte reste telle quelle.
+const PRECISION_PREFIX: Record<string, string> = {
+  about: 'ABT', estimated: 'EST', calculated: 'CAL', before: 'BEF', after: 'AFT', interpreted: 'INT',
+}
+
+// Une date tronquée au 1er janvier vient d'une année seule : on la réécrit comme une année
+function exportedDate(value: Date | null): string | null {
+  if (!value) return null
+  const iso = value.toISOString().slice(0, 10)
+  return isoToGedcomDate(iso.endsWith('-01-01') ? iso.slice(0, 4) : iso)
+}
+
+function qualifiedGedcomDate(start: Date | null, end: Date | null, precision: string | null, text?: string | null): string | null {
+  // Le texte d'origine (calendrier républicain, julien, période) prime : on le rend tel qu'il a été lu
+  if (text && precision) return oneLine(text)
+  const from = exportedDate(start)
+  const to = exportedDate(end)
+  if (!from) return text ? oneLine(text) : null
+  if (!precision || precision === 'exact') return from
+  if (precision === 'between') return to ? `BET ${from} AND ${to}` : `AFT ${from}`
+  if (precision === 'from') return to ? `FROM ${from} TO ${to}` : `FROM ${from}`
+  if (precision === 'to') return `TO ${from}`
+  const prefix = PRECISION_PREFIX[precision]
+  return prefix ? `${prefix} ${from}` : from
+}
+
+type ExportedEvent = {
+  type: string
+  label: string | null
+  date: Date | null
+  dateEnd: Date | null
+  datePrecision: string | null
+  dateText: string | null
+  place: string | null
+  description: string | null
+  notes: string | null
+  sources: string | null
+}
+
+// Balise GEDCOM de chaque type : la première rencontrée dans la table de lecture (BAPM avant CHR)
+const reverseTags = (table: Record<string, string>) => {
+  const out: Record<string, string> = {}
+  for (const [tag, type] of Object.entries(table)) if (!out[type]) out[type] = tag
+  return out
+}
+const PERSON_EVENT_TAGS = reverseTags(PERSON_EVENT_TYPES)
+const FAMILY_EVENT_TAGS = reverseTags(FAMILY_EVENT_TYPES)
+
+function pushMultiline(lines: string[], level: number, tag: string, text: string) {
+  const [first, ...rest] = text.split(/\r\n|\r|\n/)
+  lines.push(`${level} ${tag} ${first}`.trimEnd())
+  for (const line of rest) lines.push(`${level + 1} CONT ${line}`.trimEnd())
+}
+
+function pushNotesAndSources(lines: string[], level: number, event: Pick<ExportedEvent, 'notes' | 'sources'> | undefined) {
+  if (!event) return
+  if (event.notes) pushMultiline(lines, level, 'NOTE', event.notes)
+  for (const source of (event.sources ?? '').split('\n').map((s) => s.trim()).filter(Boolean)) {
+    lines.push(`${level} SOUR ${source}`)
+  }
+}
+
+function pushLifeEvent(lines: string[], event: ExportedEvent, tags: Record<string, string>) {
+  const tag = tags[event.type] ?? 'EVEN'
+  const value = event.description ? ` ${oneLine(event.description)}` : ''
+  lines.push(`1 ${tag}${value}`)
+  if (tag === 'EVEN' || tag === 'FACT') {
+    const label = event.label ?? (tags[event.type] ? null : event.type)
+    if (label) lines.push(`2 TYPE ${oneLine(label)}`)
+  }
+  const date = qualifiedGedcomDate(event.date, event.dateEnd, event.datePrecision, event.dateText)
+  if (date) lines.push(`2 DATE ${date}`)
+  if (event.place) lines.push(`2 PLAC ${oneLine(event.place)}`)
+  pushNotesAndSources(lines, 2, event)
 }
 
 // ─── Name Parsing ────────────────────────────────────────────────────────────
@@ -242,10 +338,11 @@ export const gedcomRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    const [persons, unions, links] = await Promise.all([
+    const [persons, unions, links, lifeEvents] = await Promise.all([
       app.prisma.person.findMany({ where: { treeId, deletedAt: null } }),
       app.prisma.union.findMany({ where: { treeId, deletedAt: null } }),
       app.prisma.parentChildLink.findMany({ where: { treeId, deletedAt: null } }),
+      app.prisma.lifeEvent.findMany({ where: { treeId, deletedAt: null, status: 'approved' }, orderBy: [{ date: 'asc' }, { displayOrder: 'asc' }] }),
     ])
 
     const personById = new Map(persons.map((p) => [p.id, p]))
@@ -282,6 +379,7 @@ export const gedcomRoutes: FastifyPluginAsync = async (app) => {
 
     // Assign each child to a union FAM
     const childrenByUnion = new Map<string, Set<string>>()
+    const adoptedInUnion = new Set<string>()
     for (const link of links) {
       const childId = link.childPersonId
       let unionId: string | undefined
@@ -302,6 +400,7 @@ export const gedcomRoutes: FastifyPluginAsync = async (app) => {
       }
 
       if (!unionId) continue
+      if (link.parentageType === 'adoption') adoptedInUnion.add(`${unionId}|${childId}`)
       const set = childrenByUnion.get(unionId) ?? new Set()
       set.add(childId)
       childrenByUnion.set(unionId, set)
@@ -328,6 +427,16 @@ export const gedcomRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
+    // Événements de vie : rangés par personne et par union, pour les réécrire sous leur propriétaire
+    const eventsByPerson = new Map<string, typeof lifeEvents>()
+    const eventsByUnion = new Map<string, typeof lifeEvents>()
+    for (const event of lifeEvents) {
+      const target = event.personId ? eventsByPerson : event.unionId ? eventsByUnion : null
+      const key = event.personId ?? event.unionId
+      if (!target || !key) continue
+      target.set(key, [...(target.get(key) ?? []), event])
+    }
+
     // ── Write GEDCOM ──
     const lines: string[] = []
     const now = new Date()
@@ -345,24 +454,42 @@ export const gedcomRoutes: FastifyPluginAsync = async (app) => {
       const xref = sanitizeXref(person.id)
       lines.push(`0 @I${xref}@ INDI`)
       lines.push(`1 NAME ${oneLine(person.firstName)} /${oneLine(person.lastName).replace(/\//g, '')}/`)
+      if (person.nickname) lines.push(`2 NICK ${oneLine(person.nickname)}`)
 
       if (person.sex === 'male' || person.sex === 'M') lines.push('1 SEX M')
       else if (person.sex === 'female' || person.sex === 'F') lines.push('1 SEX F')
 
-      const birthDate = isoToGedcomDate(person.birthDate)
-      if (birthDate || person.birthPlace) {
+      const personEvents = eventsByPerson.get(person.id) ?? []
+      const birthDetails = personEvents.find((event) => event.type === 'birth')
+      const deathDetails = personEvents.find((event) => event.type === 'death')
+
+      const birthDate = qualifiedGedcomDate(person.birthDate, person.birthDateEnd, person.birthDatePrecision)
+      if (birthDate || person.birthPlace || birthDetails) {
         lines.push('1 BIRT')
         if (birthDate) lines.push(`2 DATE ${birthDate}`)
         if (person.birthPlace) lines.push(`2 PLAC ${oneLine(person.birthPlace)}`)
+        pushNotesAndSources(lines, 2, birthDetails)
       }
 
-      const deathDate = isoToGedcomDate(person.deathDate)
-      if (deathDate) {
+      const deathDate = qualifiedGedcomDate(person.deathDate, person.deathDateEnd, person.deathDatePrecision)
+      if (deathDate || person.deathPlace || deathDetails) {
         lines.push('1 DEAT')
-        lines.push(`2 DATE ${deathDate}`)
+        if (deathDate) lines.push(`2 DATE ${deathDate}`)
+        if (person.deathPlace) lines.push(`2 PLAC ${oneLine(person.deathPlace)}`)
+        pushNotesAndSources(lines, 2, deathDetails)
+      } else if (person.isDeceased) {
+        // Décédé(e) sans rien d'autre : la forme courte de la norme
+        lines.push('1 DEAT Y')
       }
 
-      if (person.profession) lines.push(`1 OCCU ${oneLine(person.profession)}`)
+      // Le champ « profession » s'écrit seulement s'il n'est pas déjà un des métiers datés
+      const professionKnown = personEvents.some(
+        (event) => event.type === 'occupation' && event.description?.trim().toLowerCase() === person.profession?.trim().toLowerCase(),
+      )
+      if (person.profession && !professionKnown) lines.push(`1 OCCU ${oneLine(person.profession)}`)
+      for (const event of personEvents) {
+        if (event.type !== 'birth' && event.type !== 'death') pushLifeEvent(lines, event, PERSON_EVENT_TAGS)
+      }
 
       if (person.notes) {
         const noteLines = person.notes.split(/\r\n|\r|\n/)
@@ -380,6 +507,7 @@ export const gedcomRoutes: FastifyPluginAsync = async (app) => {
       // FAMC: links this person to their parent family (as child)
       for (const uid of famcByPerson.get(person.id) ?? []) {
         lines.push(`1 FAMC @F${sanitizeXref(uid)}@`)
+        if (adoptedInUnion.has(`${uid}|${person.id}`)) lines.push('2 PEDI adopted')
       }
     }
 
@@ -407,10 +535,17 @@ export const gedcomRoutes: FastifyPluginAsync = async (app) => {
         lines.push(`1 CHIL @I${sanitizeXref(childId)}@`)
       }
 
-      const marriageDate = isoToGedcomDate(union.startDate)
-      if (marriageDate) {
+      const unionEvents = eventsByUnion.get(union.id) ?? []
+      const marriageDetails = unionEvents.find((event) => event.type === 'marriage')
+      const marriageDate = qualifiedGedcomDate(union.startDate, null, union.startDatePrecision)
+      if (marriageDate || union.startPlace || marriageDetails) {
         lines.push('1 MARR')
-        lines.push(`2 DATE ${marriageDate}`)
+        if (marriageDate) lines.push(`2 DATE ${marriageDate}`)
+        if (union.startPlace) lines.push(`2 PLAC ${oneLine(union.startPlace)}`)
+        pushNotesAndSources(lines, 2, marriageDetails)
+      }
+      for (const event of unionEvents) {
+        if (event.type !== 'marriage') pushLifeEvent(lines, event, FAMILY_EVENT_TAGS)
       }
     }
 
@@ -479,8 +614,12 @@ export const gedcomRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const xrefToPersonId = new Map<string, string>()
-    const objeByXref = indexObjeRecords(roots)
+    const records = indexGedcomRecords(roots)
+    const objeByXref = records.obje
     const photoRefs: Array<{ personId: string; file: string }> = []
+    // Les autres fichiers cités (actes, registres, photos de famille) : des souvenirs pour les personnes
+    // créées par cet import. Une personne déjà dans l'arbre n'en reçoit pas, un second import ne double rien.
+    const mediaRefs: Array<{ personId: string; file: string; caption: string | null; source: string | null }> = []
 
     // Ce que l'arbre contient déjà : un second import du même fichier complète l'arbre sans rien doubler.
     // Chaque personne existante ne sert qu'une fois, deux fiches identiques du fichier restent deux personnes.
@@ -505,6 +644,9 @@ export const gedcomRoutes: FastifyPluginAsync = async (app) => {
     let personsReused = 0
     let unionsCreated = 0
     let linksCreated = 0
+    let eventsCreated = 0
+    // Adoptions déclarées sous l'enfant (« 2 PEDI adopted ») : enfant → familles où il est adopté
+    const adoptedByChild = new Map(indiNodes.map((indi) => [indi.xref!, adoptedFamilies(indi)]))
 
     importInProgress = true
     try {
@@ -520,19 +662,14 @@ export const gedcomRoutes: FastifyPluginAsync = async (app) => {
 
         const birtNode = findChild(indi, 'BIRT')
         const birthDateIso = gedcomDateToIso(findChild(birtNode, 'DATE')?.value ?? '')
-        const birthPlace = clip(findChild(birtNode, 'PLAC')?.value ?? null, 200)
+        const birthPlace = clip(cleanGedcomPlace(findChild(birtNode, 'PLAC')?.value), 200)
 
         const deatNode = findChild(indi, 'DEAT')
         const deathDateIso = gedcomDateToIso(findChild(deatNode, 'DATE')?.value ?? '')
 
         const profession = clip(findChild(indi, 'OCCU')?.value ?? null, 200)
 
-        const noteNode = findChild(indi, 'NOTE')
-        let notes: string | null = null
-        if (noteNode?.value) {
-          const contLines = findAllChildren(noteNode, 'CONT').map((n) => n.value)
-          notes = clip([noteNode.value, ...contLines].join('\n'), 2000)
-        }
+        const notes = clip(personNotes(indi, records), 2000)
 
         const personFirstName = (firstName || '?').slice(0, 120)
         const personLastName = (lastName || '').slice(0, 120)
@@ -549,6 +686,7 @@ export const gedcomRoutes: FastifyPluginAsync = async (app) => {
           continue
         }
 
+        const { events, ...extras } = personExtras(indi, records)
         const person = await tx.person.create({
           data: {
             treeId,
@@ -557,17 +695,28 @@ export const gedcomRoutes: FastifyPluginAsync = async (app) => {
             sex,
             birthDate,
             deathDate,
+            // « 1 DEAT Y » ou un décès sans date : décédé(e), date inconnue
+            isDeceased: Boolean(deatNode) && !deathDate,
             birthPlace,
             profession,
             notes,
+            ...extras,
             createdBy: actor.userId,
             updatedBy: actor.userId,
           },
         })
+        if (events.length) {
+          await tx.lifeEvent.createMany({ data: events.map((event, index) => ({ ...event, treeId, personId: person.id, displayOrder: index + 1 })) })
+          eventsCreated += events.length
+        }
 
         xrefToPersonId.set(indi.xref!, person.id)
         personsCreated++
         if (photoPath) photoRefs.push({ personId: person.id, file: photoPath })
+        for (const ref of mediaRefsForPerson(indi, records, photoPath)) {
+          if (mediaRefs.length >= MAX_IMPORTED_MEDIA_REFS) break
+          mediaRefs.push({ personId: person.id, ...ref })
+        }
       }
 
       for (const fam of famNodes) {
@@ -586,17 +735,23 @@ export const gedcomRoutes: FastifyPluginAsync = async (app) => {
         const secondPartner = partner1Id ? (partner2Id ?? null) : null
         let unionId = unionByPair.get(pairKey(firstPartner, secondPartner))
         if (!unionId) {
+          const { events: familyEvents, ...unionExtras } = familyExtras(fam, records)
           const union = await tx.union.create({
             data: {
               treeId,
               partner1PersonId: firstPartner,
               partner2PersonId: secondPartner,
               startDate: isoDateToDbDate(marriageDateIso),
+              ...unionExtras,
             },
           })
           unionId = union.id
           unionByPair.set(pairKey(firstPartner, secondPartner), unionId)
           unionsCreated++
+          if (familyEvents.length) {
+            await tx.lifeEvent.createMany({ data: familyEvents.map((event, index) => ({ ...event, treeId, unionId: union.id, displayOrder: index + 1 })) })
+            eventsCreated += familyEvents.length
+          }
         }
 
         const chilNodes = findAllChildren(fam, 'CHIL')
@@ -621,6 +776,8 @@ export const gedcomRoutes: FastifyPluginAsync = async (app) => {
                 parentPersonId: parentId,
                 childPersonId: childId,
                 viaUnionId: unionId,
+                ...(adoptedByChild.get(chilXref)?.has(fam.xref!) ? { parentageType: 'adoption' } : {}),
+                displayOrder: await nextSiblingOrder(tx, treeId, parentId),
               },
             })
             linkKeys.add(linkKey)
@@ -637,7 +794,7 @@ export const gedcomRoutes: FastifyPluginAsync = async (app) => {
           action: 'gedcom_imported',
           entityType: 'tree',
           entityId: treeId,
-          payloadJson: { personsCreated, personsReused, unionsCreated, linksCreated, photoRefs: photoRefs.length },
+          payloadJson: { personsCreated, personsReused, unionsCreated, linksCreated, eventsCreated, photoRefs: photoRefs.length, mediaRefs: mediaRefs.length },
         },
       })
     }, { timeout: 60000 })
@@ -645,7 +802,8 @@ export const gedcomRoutes: FastifyPluginAsync = async (app) => {
       importInProgress = false
     }
 
-    // photoRefs : chemin de la photo que le logiciel d'origine associait à chaque personne (rien n'est gardé)
-    return reply.send({ personsCreated, personsReused, unionsCreated, linksCreated, photoRefs })
+    // photoRefs : chemin de la photo que le logiciel d'origine associait à chaque personne ; mediaRefs : les
+    // autres fichiers cités, avec leur titre et leur source (rien n'est gardé en base)
+    return reply.send({ personsCreated, personsReused, unionsCreated, linksCreated, eventsCreated, photoRefs, mediaRefs })
   })
 }

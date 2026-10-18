@@ -11,6 +11,8 @@ import { syncPersonMediaOrder } from '../lib/media-order.js'
 
 import type { Actor, MembershipRole } from '../types/auth.js'
 import { findParentChildValidationError, findUnionValidationError } from '../utils/relationship-guards.js'
+import { nextSiblingOrder } from '../lib/sibling-order.js'
+import { personPrecisionResets, unionPrecisionResets } from '../lib/date-precision.js'
 
 const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/
 
@@ -71,6 +73,7 @@ const personCreateSchema = z.object({
   birthName: z.string().max(120).optional().nullable(),
   birthDate: z.string().regex(isoDateRegex).optional().nullable(),
   deathDate: z.string().regex(isoDateRegex).optional().nullable(),
+  isDeceased: z.boolean().optional(),
   birthPlace: z.string().max(200).optional().nullable(),
   profession: z.string().max(200).optional().nullable(),
   region: z.string().max(120).optional().nullable(),
@@ -86,6 +89,7 @@ const personUpdateSchema = z
     birthName: z.string().max(120).optional().nullable(),
     birthDate: z.string().regex(isoDateRegex).optional().nullable(),
     deathDate: z.string().regex(isoDateRegex).optional().nullable(),
+    isDeceased: z.boolean().optional(),
     birthPlace: z.string().max(200).optional().nullable(),
     profession: z.string().max(200).optional().nullable(),
     region: z.string().max(120).optional().nullable(),
@@ -145,7 +149,10 @@ const reorderSchema = z.object({
 
 type ContributionStatus = 'pending' | 'approved' | 'rejected'
 
-type ParsedChange = z.infer<typeof contributionChangeSchema>
+// Les souvenirs et les moments arrivent par leurs propres routes, jamais par une session envoyée en bloc
+type ParsedChange = Omit<z.infer<typeof contributionChangeSchema>, 'entityType'> & {
+  entityType: z.infer<typeof contributionChangeSchema>['entityType'] | 'life_event'
+}
 
 type TxClient = Prisma.TransactionClient
 
@@ -314,6 +321,21 @@ async function applyContributionChange(
     return { entityId: change.entityId ?? null }
   }
 
+  // Moment proposé par la famille : il existe déjà, on le rend visible
+  if (change.entityType === 'life_event') {
+    if (change.action !== 'create' || !change.entityId) {
+      throw new ContributionRouteError(400, 'unsupported_change_action_for_life_event')
+    }
+    const updated = await tx.lifeEvent.updateMany({
+      where: { id: change.entityId, treeId, deletedAt: null },
+      data: { status: 'approved' },
+    })
+    if (updated.count === 0) {
+      throw new ContributionRouteError(400, 'invalid_entity_reference')
+    }
+    return { entityId: change.entityId }
+  }
+
   // Souvenir envoyé par la famille : le fichier existe déjà, on le rend visible
   if (change.entityType === 'media') {
     if (change.action !== 'create' || !change.entityId) {
@@ -358,6 +380,7 @@ async function applyContributionChange(
           birthName: toTrimmedStringOrNull(parsed.data.birthName),
           birthDate: toDateOrNull(parsed.data.birthDate),
           deathDate: toDateOrNull(parsed.data.deathDate),
+          isDeceased: !parsed.data.deathDate && Boolean(parsed.data.isDeceased),
           birthPlace: toTrimmedStringOrNull(parsed.data.birthPlace),
           profession: toTrimmedStringOrNull(parsed.data.profession),
           region: toTrimmedStringOrNull(parsed.data.region),
@@ -390,6 +413,17 @@ async function applyContributionChange(
         throw new ContributionRouteError(400, 'invalid_change_after')
       }
 
+      const nextDates = {
+        birthDate: parsed.data.birthDate !== undefined ? toDateOrNull(parsed.data.birthDate) : undefined,
+        deathDate: parsed.data.deathDate !== undefined ? toDateOrNull(parsed.data.deathDate) : undefined,
+      }
+      const currentDates = nextDates.birthDate !== undefined || nextDates.deathDate !== undefined
+        ? await tx.person.findFirst({
+          where: { id: change.entityId, treeId, deletedAt: null },
+          select: { birthDate: true, deathDate: true },
+        })
+        : null
+
       const result = await tx.person.updateMany({
         where: {
           id: change.entityId,
@@ -397,11 +431,13 @@ async function applyContributionChange(
           deletedAt: null,
         },
         data: {
+          ...personPrecisionResets(currentDates, nextDates),
           firstName: parsed.data.firstName !== undefined ? parsed.data.firstName.trim() : undefined,
           lastName: parsed.data.lastName !== undefined ? parsed.data.lastName.trim() : undefined,
           birthName: parsed.data.birthName !== undefined ? toTrimmedStringOrNull(parsed.data.birthName) : undefined,
-          birthDate: parsed.data.birthDate !== undefined ? toDateOrNull(parsed.data.birthDate) : undefined,
-          deathDate: parsed.data.deathDate !== undefined ? toDateOrNull(parsed.data.deathDate) : undefined,
+          birthDate: nextDates.birthDate,
+          deathDate: nextDates.deathDate,
+          isDeceased: nextDates.deathDate ? false : parsed.data.isDeceased,
           birthPlace: parsed.data.birthPlace !== undefined ? toTrimmedStringOrNull(parsed.data.birthPlace) : undefined,
           profession: parsed.data.profession !== undefined ? toTrimmedStringOrNull(parsed.data.profession) : undefined,
           region: parsed.data.region !== undefined ? toTrimmedStringOrNull(parsed.data.region) : undefined,
@@ -510,6 +546,7 @@ async function applyContributionChange(
         select: {
           partner1PersonId: true,
           partner2PersonId: true,
+          startDate: true,
         },
       })
       if (!existingUnion) {
@@ -536,6 +573,9 @@ async function applyContributionChange(
           deletedAt: null,
         },
         data: {
+          ...unionPrecisionResets(existingUnion, {
+            startDate: parsed.data.startDate !== undefined ? toDateOrNull(parsed.data.startDate) : undefined,
+          }),
           partner1PersonId: parsed.data.partner1PersonId,
           partner2PersonId: parsed.data.partner2PersonId,
           unionType: parsed.data.unionType,
@@ -632,7 +672,7 @@ async function applyContributionChange(
         childPersonId: parsed.data.childPersonId,
         viaUnionId: parsed.data.viaUnionId ?? null,
         parentageType: parsed.data.parentageType ?? 'biologique',
-        displayOrder: parsed.data.displayOrder ?? 1,
+        displayOrder: parsed.data.displayOrder ?? await nextSiblingOrder(tx, treeId, parsed.data.parentPersonId),
       },
       select: {
         id: true,
@@ -794,6 +834,7 @@ async function snapshotEntity(
         birthName: true,
         birthDate: true,
         deathDate: true,
+        isDeceased: true,
         birthPlace: true,
         profession: true,
         region: true,
@@ -1276,6 +1317,12 @@ export const contributionRoutes: FastifyPluginAsync = async (app) => {
               }
             }
           } else {
+            if (change.entityType === 'life_event' && change.entityId) {
+              await tx.lifeEvent.updateMany({
+                where: { id: change.entityId, treeId: params.data.id },
+                data: { status: 'rejected', deletedAt: new Date() },
+              })
+            }
             if (change.entityType === 'media' && change.entityId) {
               await tx.mediaItem.updateMany({
                 where: { id: change.entityId, treeId: params.data.id },
