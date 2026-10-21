@@ -65,7 +65,6 @@ export default {
   // ─── Review panel ───
   'Copie indisponible': 'Копирование недоступно',
   'Minimum 8 caractères.': 'Минимум 8 символов.',
-  'Partager et relire': 'Поделиться и проверить',
   'La famille {em}': 'Семья {em}',
   'participe': 'участвует',
   'Fermer': 'Закрыть',
@@ -95,7 +94,6 @@ export default {
     'После смены пароля всем, кто уже открывал древо, придётся ввести новый.',
   'Le message à envoyer': 'Сообщение для родных',
   'Message copié': 'Сообщение скопировано',
-  'Copier le message': 'Скопировать сообщение',
   'Propositions à relire': 'Предложения на проверку',
   'Acceptez ou refusez chaque modification, puis appliquez vos choix.': 'Примите или отклоните каждое изменение, затем примените решения.',
   'Actualiser': 'Обновить',
@@ -189,9 +187,7 @@ export default {
   'Envoyer les modifications': 'Отправить изменения',
   'Aucune modification à soumettre': 'Нет изменений для отправки',
   "Vous modifiez l'arbre": 'Вы редактируете древо',
-  'Vos propositions': 'Ваши предложения',
   "Mettre à jour l'arbre": 'Обновить древо',
-  'Envoyer mes ajouts': 'Отправить мои дополнения',
   "Aucune modification à envoyer pour l'instant": 'Пока нечего отправлять',
   'Quitter le mode édition': 'Выйти из режима редактирования',
 
@@ -206,4 +202,12 @@ export default {
   'Des modifications non enregistrées vous attendent': 'У вас есть несохранённые изменения',
   'Restaurer': 'Восстановить',
   'Ignorer': 'Пропустить',
+
+  // Invitation message and suggestions (1.2.0)
+  "Copier le message d'invitation": 'Скопировать приглашение',
+  'Voir ou modifier le message': 'Посмотреть или изменить сообщение',
+  'Masquer le message': 'Скрыть сообщение',
+  'Vous proposez des changements': 'Вы предлагаете изменения',
+  'Vous proposez': 'Вы предлагаете',
+  'Proposer des changements': 'Предложить изменения',
 }

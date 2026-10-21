@@ -184,6 +184,13 @@ jobs:
       - name: Test de fumée par le port web
         run: bash tools/docker-smoke.sh http://localhost:8080
 
+      # Les commandes de sauvegarde et de restauration du README, jouées pour de vrai
+      - name: Sauvegarde puis restauration
+        run: |
+          set -euo pipefail
+          bash tools/docker-restore-check.sh http://localhost:8080
+          bash tools/docker-smoke.sh http://localhost:8080
+
       # Un second front qui joint l'API par le nom de son conteneur (API_UPSTREAM), comme sur Umbrel.
       - name: Front avec une autre adresse d'API
         run: |

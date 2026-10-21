@@ -98,4 +98,11 @@ export default {
   'Ressource introuvable.': 'Не найдено.',
   'Conflit détecté (email ou slug déjà utilisé).': 'Конфликт: email или адрес уже заняты.',
   "Erreur backend. Vérifiez que l'API et la base sont lancées.": 'Ошибка сервера. Проверьте, что API и база данных запущены.',
+
+  // Saving and links (1.2.0)
+  'Lien modifié (démo locale)': 'Связь изменена (локальное демо)',
+  'Lien modifié': 'Связь изменена',
+  'Modification ajoutée à la contribution': 'Изменение добавлено в ваши правки',
+  'Le serveur ne répond pas. Vérifiez la connexion et réessayez.': 'Сервер не отвечает. Проверьте подключение и попробуйте снова.',
+  'Modifications de {name} enregistrées': 'Изменения сохранены: {name}',
 }

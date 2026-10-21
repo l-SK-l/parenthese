@@ -4,7 +4,11 @@ import { z } from 'zod'
 
 import { env } from '../config/env.js'
 import { hashPassword, verifyPassword } from '../lib/auth.js'
+import { isOidcEnabled } from '../lib/oidc.js'
+import { createAccountIfAllowed, isRegistrationOpen } from '../lib/registration.js'
+import { signUserSession } from '../lib/user-session.js'
 import { revokeUserToken } from '../lib/token-revocation.js'
+import { deletedAccountVisitorKey } from '../lib/tree-visits.js'
 import { deleteTreeRecords, removeTreeMediaDirectories } from '../lib/tree-purge.js'
 import type { AnyJwtPayload } from '../types/auth.js'
 
@@ -20,9 +24,19 @@ const credentialsSchema = z.object({
   password: z.string().min(8).max(128),
 })
 
+// Prénom du compte, facultatif : seulement à l'inscription (la connexion ne le demande pas)
 const registerSchema = credentialsSchema.extend({
+  firstName: z.string().max(60).optional().nullable(),
   registrationCode: z.string().max(256).optional(),
 })
+
+function trimmedFirstName(value: string | null | undefined): string | null {
+  const trimmed = (value ?? '').trim()
+  return trimmed ? trimmed : null
+}
+
+// Suppression d'un compte sans mot de passe : connexion chez le fournisseur de moins de 15 minutes
+const RECENT_SIGN_IN_MS = 15 * 60 * 1000
 
 // Sign-up code check. Both sides are hashed so timingSafeEqual compares equal lengths and the
 // answer time says nothing about the code. No code set on the server: sign-up is open.
@@ -34,9 +48,11 @@ function isRegistrationCodeAccepted(given: string | undefined): boolean {
   return timingSafeEqual(givenHash, expectedHash)
 }
 
+// Un compte avec mot de passe le redonne ; un compte né d'une connexion OIDC, sans mot de passe, retape son email
 const deleteAccountSchema = z.object({
-  password: z.string().min(1).max(128),
-})
+  password: z.string().min(1).max(128).optional(),
+  confirmEmail: z.string().min(1).max(320).optional(),
+}).refine((value) => value.password || value.confirmEmail, { message: 'password or confirmEmail required' })
 
 const updateLastTreeSchema = z.object({
   treeId: z.string().min(1),
@@ -97,10 +113,18 @@ async function resolveAccessibleLastTree(
 }
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
-  // What the sign-up form needs to know before it is shown: whether to ask for the code
-  app.get('/config', async () => ({
-    registrationCodeRequired: env.REGISTRATION_CODE !== '',
-  }))
+  // Ce que l'écran d'accueil propose : l'app cache « Créer un compte » quand l'instance n'en accepte plus
+  app.get(
+    '/options',
+    { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
+    async (_request, reply) => reply.send({
+      registration: await isRegistrationOpen(app.prisma),
+      // The sign-up form asks for the code when REGISTRATION_CODE is set
+      registrationCodeRequired: env.REGISTRATION_CODE !== '',
+      passwordLogin: env.PASSWORD_LOGIN,
+      oidc: isOidcEnabled() ? { name: env.OIDC_PROVIDER_NAME } : null,
+    }),
+  )
 
   app.post(
     '/register',
@@ -118,6 +142,16 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ error: 'invalid_payload', details: parsed.error.flatten() })
       }
 
+      // Connexion par le fournisseur seulement (PASSWORD_LOGIN=false) : pas de compte à mot de passe
+      if (!env.PASSWORD_LOGIN) {
+        return reply.code(403).send({ error: 'password_login_disabled' })
+      }
+
+      // Inscription fermée : refusée avant toute lecture, la réponse ne dit pas si l'adresse a un compte
+      if (!(await isRegistrationOpen(app.prisma))) {
+        return reply.code(403).send({ error: 'registration_closed' })
+      }
+
       // Checked before the email, so that without the code nobody learns which addresses have an account
       if (!isRegistrationCodeAccepted(parsed.data.registrationCode)) {
         return reply.code(403).send({ error: 'invalid_registration_code' })
@@ -130,29 +164,24 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const passwordHash = await hashPassword(parsed.data.password)
-      const user = await app.prisma.user.create({
+      const user = await createAccountIfAllowed(app.prisma, (tx) => tx.user.create({
         data: {
           email,
           passwordHash,
+          firstName: trimmedFirstName(parsed.data.firstName),
         },
         select: {
           id: true,
           email: true,
+          firstName: true,
         },
-      })
+      }))
+      // Un autre compte est né pendant le calcul du hash, sur une instance fermée
+      if (!user) {
+        return reply.code(403).send({ error: 'registration_closed' })
+      }
 
-      const token = app.jwt.sign(
-        {
-          kind: 'user',
-          sub: user.id,
-          jti: randomUUID(),
-          userId: user.id,
-          email: user.email,
-        },
-        { expiresIn: env.JWT_EXPIRES_IN },
-      )
-
-      return reply.code(201).send({ token, user })
+      return reply.code(201).send({ token: signUserSession(app, user), user: { ...user, hasPassword: true } })
     },
   )
 
@@ -167,6 +196,10 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (request, reply) => {
+      if (!env.PASSWORD_LOGIN) {
+        return reply.code(403).send({ error: 'password_login_disabled' })
+      }
+
       const parsed = credentialsSchema.safeParse(request.body)
       if (!parsed.success) {
         return reply.code(400).send({ error: 'invalid_payload', details: parsed.error.flatten() })
@@ -178,12 +211,14 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         select: {
           id: true,
           email: true,
+          firstName: true,
           passwordHash: true,
         },
       })
 
-      if (!user) {
-        // Même durée qu'un mauvais mot de passe : la réponse ne dit pas si l'adresse a un compte
+      // Adresse inconnue, ou compte né d'une connexion OIDC (sans mot de passe) : même durée qu'un mauvais mot de
+      // passe, la réponse ne dit pas si l'adresse a un compte
+      if (!user?.passwordHash) {
         await verifyPassword(parsed.data.password, await getDummyHash())
         return reply.code(401).send({ error: 'invalid_credentials' })
       }
@@ -193,26 +228,35 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(401).send({ error: 'invalid_credentials' })
       }
 
-      const token = app.jwt.sign(
-        {
-          kind: 'user',
-          sub: user.id,
-          jti: randomUUID(),
-          userId: user.id,
-          email: user.email,
-        },
-        { expiresIn: env.JWT_EXPIRES_IN },
-      )
-
       return reply.send({
-        token,
+        token: signUserSession(app, user),
         user: {
           id: user.id,
           email: user.email,
+          firstName: user.firstName,
+          hasPassword: true,
         },
       })
     },
   )
+
+  // Profil du compte connecté (prénom compris) : la session restaurée sur un autre appareil le retrouve
+  app.get('/me', async (request, reply) => {
+    if (!request.actor || request.actor.kind !== 'user') {
+      return reply.code(401).send({ error: 'authentication_required' })
+    }
+
+    const user = await app.prisma.user.findUnique({
+      where: { id: request.actor.userId },
+      select: { id: true, email: true, firstName: true, passwordHash: true },
+    })
+    if (!user) {
+      return reply.code(401).send({ error: 'authentication_required' })
+    }
+
+    // hasPassword : l'écran de suppression demande le mot de passe, ou l'email pour un compte sans mot de passe
+    return reply.send({ user: { id: user.id, email: user.email, firstName: user.firstName, hasPassword: Boolean(user.passwordHash) } })
+  })
 
   app.get('/me/last-tree', async (request, reply) => {
     if (!request.actor || request.actor.kind !== 'user') {
@@ -342,6 +386,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         where: { id: userId },
         select: {
           id: true,
+          email: true,
           passwordHash: true,
         },
       })
@@ -350,12 +395,24 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(401).send({ error: 'authentication_required' })
       }
 
-      const isValid = await verifyPassword(parsed.data.password, user.passwordHash)
+      const payload = await request.jwtVerify<AnyJwtPayload & { exp?: number; iat?: number }>()
+
+      if (!user.passwordHash) {
+        // Compte né d'une connexion OIDC : pas de mot de passe à redonner. Il retape son email, et la session doit
+        // venir d'une connexion récente chez le fournisseur (une session volée ou oubliée ouverte ne suffit pas).
+        const sessionAgeMs = typeof payload.iat === 'number' ? Date.now() - payload.iat * 1000 : Infinity
+        if (sessionAgeMs > RECENT_SIGN_IN_MS) {
+          return reply.code(403).send({ error: 'recent_sign_in_required' })
+        }
+      }
+
+      const isValid = user.passwordHash
+        ? Boolean(parsed.data.password) && await verifyPassword(parsed.data.password as string, user.passwordHash)
+        : (parsed.data.confirmEmail ?? '').trim().toLowerCase() === user.email
       if (!isValid) {
         return reply.code(403).send({ error: 'invalid_password' })
       }
 
-      const payload = await request.jwtVerify<AnyJwtPayload & { exp?: number }>()
 
       // Arbres possédés (y compris ceux marqués supprimés) puis compte, dans une seule transaction :
       // la relation propriétaire est en Restrict, les arbres doivent partir avant l'utilisateur.
@@ -372,6 +429,12 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         await tx.contributionSession.updateMany({
           where: { submittedByUserId: userId },
           data: { submittedByLabel: 'Contributeur' },
+        })
+
+        // Ses visites des autres arbres restent comptées, sans son identifiant
+        await tx.treeVisit.updateMany({
+          where: { visitorKey: `user:${userId}` },
+          data: { visitorKey: deletedAccountVisitorKey(userId) },
         })
 
         await tx.user.delete({ where: { id: userId } })

@@ -6,30 +6,11 @@ export default {
   'Voir l’enfant': 'Показать ребёнка',
   'Inconnu': 'Неизвестно',
 
-  // Relationship shown on hover (components/galaxy/pathfinding.js)
-  'Conjoint(e)': 'Супруг(а)',
-  'Beau-parent': 'Родитель супруга',
-  'Bel-enfant': 'Зять/невестка',
-  'Beau-frère/sœur': 'Брат/сестра супруга',
+  // The relationship shown on hover is named language by language in utils/kinship/
+
+  // Kind of relative to add (components/AddPersonPanel.jsx)
   'Parent': 'Родитель',
-  'Grand-parent': 'Дедушка/бабушка',
-  'Arrière-grand-parent': 'Прадедушка/прабабушка',
-  'Aïeul(e) {n}e gén.': 'Предок в {n}-м поколении',
   'Enfant': 'Ребёнок',
-  'Petit-enfant': 'Внук/внучка',
-  'Arrière-petit-enfant': 'Правнук/правнучка',
-  'Descendant(e) {n}e gén.': 'Потомок в {n}-м поколении',
-  'Frère/Sœur': 'Брат/сестра',
-  'Oncle/Tante': 'Дядя/тётя',
-  'Grand-oncle/tante': 'Двоюродный дед/бабушка',
-  'Neveu/Nièce': 'Племянник/племянница',
-  'Petit-neveu/nièce': 'Внучатый племянник/племянница',
-  'Cousin(e) germain(e)': 'Двоюродный брат/сестра',
-  'Petit-cousin(e)': 'Двоюродный родственник',
-  'Cousin(e) {n}e degré': 'Кузен(а) {n}-й степени',
-  'Cousin(e) éloigné(e)': 'Дальний родственник',
-  '{n} liens': { one: '{n} степень родства', few: '{n} степени родства', many: '{n} степеней родства' },
-  '{label} par alliance': '{label} (по браку)',
 
   // Drag to add a person (components/ProximityFeedback.jsx)
   'Conjoint': 'Супруг(а)',
@@ -62,4 +43,11 @@ export default {
   'Grand': 'Большой',
   'Très grand': 'Очень большой',
   'Stabilo': 'Маркер',
+
+  // Family tabs (1.2.0)
+  'Famille {name}': 'Семья {name}',
+  'Familles': 'Семьи',
+  'Affichage': 'Отображение',
+  'Les grandes familles par alliance dans des onglets': 'Большие семьи супругов во вкладках',
+  "Une belle-famille plus large qu'un écran s'ouvre dans son propre onglet au lieu d'être dessinée dans l'arbre. Réglage de ce navigateur.": 'Семья супруга, которая не помещается на экран, открывается в отдельной вкладке, а не рисуется в древе. Настройка этого браузера.',
 }
