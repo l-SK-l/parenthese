@@ -3245,8 +3245,9 @@ function App() {
         zoomApiRef={galaxyZoomApiRef}
         focusPersonId={tree.treeContext.rootPersonId}
         assetRevision={tree.assetRevision}
-        photoHint={tree.canEditCurrentTree}
-        onPhotoPlaceholderClick={tree.canEditCurrentTree ? handlePhotoPlaceholderClick : null}
+        // « + photo » seulement en modification : en lecture, un clic sur un portrait vide ouvre la fiche (issue #124)
+        photoHint={tree.canEditCurrentTree && editMode.isActive}
+        onPhotoPlaceholderClick={tree.canEditCurrentTree && editMode.isActive ? handlePhotoPlaceholderClick : null}
         reorderEnabled={canReorderSiblings}
         onReorderSiblings={handleReorderSiblings}
         familyTabs={familyTabs}
@@ -3312,6 +3313,8 @@ function App() {
         />
       )}
       <MediaManagerPanel
+        treeId={tree.treeContext.treeId}
+        token={tree.treeContext.accessToken || auth.userAuth.token}
         visible={media.mediaManagerState.visible}
         person={tree.selectedPerson}
         medias={media.selectedPersonMedias}

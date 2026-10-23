@@ -2,6 +2,27 @@
 
 Notable changes to Parenthèse. Dates are in YYYY-MM-DD format.
 
+## 1.3.0 (2026-10-21)
+
+### Memories from Immich
+
+- Admins with Immich configured can add photos and videos from their library, from a person's memories or when adding a moment. Search by context, filter by photos or videos or by face, open a larger preview and pick several at once (#103 by @Askrosm, #128).
+- Photos come in as Immich's preview, so iPhone HEIC pictures work, and downloads stop as soon as they pass the size limit (#103).
+- Several memories picked at once are added in one go, each titled from its file name (#128).
+
+## 1.2.1 (2026-10-21)
+
+### Fixes
+
+- Clicking a person without a photo opens their profile again. The file picker only opens from "+ photo" in edit mode (#124, reported by @coutadeurf, #125).
+- GEDCOM export stays valid 5.5.1. Sex "other" is written as `SEX U`, and `SEX X` is still read on import (#126).
+
+### Self-hosting
+
+- With `PASSWORD_LOGIN=false`, an account that had a password and was linked to OIDC can delete itself by retyping its email after a recent sign-in (#126).
+- An email already linked to an OIDC identity can't be claimed by a different subject at the provider (#126).
+- HEIC and AVIF files are recognised as images instead of video, and are refused cleanly until they can be converted (#126).
+
 ## 1.2.0 (2026-10-20)
 
 ### Tree layout
