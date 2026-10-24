@@ -5,7 +5,7 @@ import { cropShape, cropViewport, isLandscapeRect, resolveFrameKind } from '../.
 // le Map global utilisé plus bas)
 import { Map as mapIcon, MapPin as mapPinIcon, Route as routeIcon } from '@lucide/icons'
 import {
-  PERSON_R, UNKNOWN_R, UNION_W, UNION_H, COMPACT_R, COMPACT_SCALE,
+  PERSON_R, UNKNOWN_R, UNION_W, UNION_H, COMPACT_R, COMPACT_SCALE, LINE_SCALE, LINE_ALPHA,
   MAX_ORBIT_MEDIAS, ORBIT_MEDIA_SIZE,
   COLORS,
   LOD_SHADOW_MIN_SCALE, LOD_DETAIL_MIN_SCALE, LOD_LABEL_FADE_IN, LOD_LABEL_FADE_OUT, CULL_MARGIN,
@@ -203,8 +203,6 @@ export function drawCoupleLinks(ctx, coupleBarMeta, posMap, nodeMap, nodeRandomD
 export const renvoiHitAreas = []
 // Badges « Famille X » sous les conjoints dont la famille est un onglet : { x0, y0, x1, y1, anchorId }
 export const familyHitAreas = []
-// Zones « + photo » : portraits vides, chez le propriétaire en modification (cercle du nœud, rempli au dessin)
-export const photoPlaceholderHitAreas = []
 const renvoiPills = []
 const familyPills = [] // badges « Famille X » : { text, cx, cy, anchorId, tabKey, alpha }
 const RENVOI_FONT = '500 11px "DM Sans", system-ui, sans-serif'
@@ -464,15 +462,11 @@ function measureTextCached(ctx, text, fontKey) {
 // ============================================================
 function drawPersonNode(ctx, node, pos, nodeProgress, {
   nodeRandomData, imageCache, hoverScales, selectedGlowScales, searchGlowScales,
-  mediaHoverState, entrance, entranceActive, elapsed, view = null, photoHint = false, liftScales = null,
+  mediaHoverState, entrance, entranceActive, elapsed, view = null, liftScales = null,
 }) {
   const { cx, cy } = pos
   const person = getPersonById(node._data.id) || node._data
   const rd = nodeRandomData.get(node.id)
-  // Zone « + photo » : seulement là où le cadre invite à poser une photo (même condition que le dessin)
-  if (photoHint && !person.photo && nodeProgress >= 0.5) {
-    photoPlaceholderHitAreas.push({ personId: node._data.id, cx, cy, r: nodeRadius(node) })
-  }
   const img = person.photo ? imageCache.get(person.photo) : null
   const frameType = resolveFrameType(person, img)
   const frameRot = rd?.frameRotation || 0
@@ -537,7 +531,9 @@ function drawPersonNode(ctx, node, pos, nodeProgress, {
   }
 
   // --- Hover scale + entrance scale (conjoint isolé : en petit) ---
-  const k = node._compact ? COMPACT_SCALE : 1
+  // Ligne directe venue d'une autre famille (onglets) : un peu plus petite et estompée
+  const k = node._compact ? COMPACT_SCALE : node._line ? LINE_SCALE : 1
+  const dim = node._line ? LINE_ALPHA : 1
   const R = PERSON_R * k
   const hs = hoverScales.get(node.id) || 0
   // Personne soulevée pour changer sa place dans la fratrie : un peu plus grande, ombre plus portée
@@ -579,7 +575,7 @@ function drawPersonNode(ctx, node, pos, nodeProgress, {
   // --- Halo glow ---
   if (withDetail) {
     const glowR = R + (12 + hs * 6) * k
-    const glowAlpha = (person.isAlive ? 0.15 + hs * 0.1 : 0.08 + hs * 0.06) * nodeProgress
+    const glowAlpha = (person.isAlive ? 0.15 + hs * 0.1 : 0.08 + hs * 0.06) * nodeProgress * dim
     const glow = ctx.createRadialGradient(cx, cy, R * 0.6, cx, cy, glowR)
     glow.addColorStop(0, `rgba(147, 64, 42, ${glowAlpha})`)
     glow.addColorStop(1, 'rgba(147, 64, 42, 0)')
@@ -591,7 +587,7 @@ function drawPersonNode(ctx, node, pos, nodeProgress, {
 
   // --- Cadre photo ---
   ctx.save()
-  ctx.globalAlpha = nodeProgress
+  ctx.globalAlpha = nodeProgress * dim
   ctx.translate(cx, cy)
   ctx.scale(personScale, personScale)
   ctx.rotate(frameRot)
@@ -606,7 +602,9 @@ function drawPersonNode(ctx, node, pos, nodeProgress, {
     ctx.shadowOffsetY = shadowY
   }
 
-  drawFrame(ctx, frameType, person, img, photoHint && !img ? hs : 0)
+  drawFrame(ctx, frameType, person, img)
+  // « À vérifier » : petit rond terracotta avec un « ? » en haut à droite du cadre, absent au dézoom
+  if (person.toVerify && withDetail) drawToVerifyMark(ctx)
   ctx.restore()
 
   // --- Labels (estompés puis absents en dézoom) ---
@@ -614,7 +612,7 @@ function drawPersonNode(ctx, node, pos, nodeProgress, {
   const labelRot = rd?.labelRotation || 0
   const labelOffsetY = (PERSON_R + 24) * personScale
   ctx.save()
-  ctx.globalAlpha = nodeProgress * labelAlpha
+  ctx.globalAlpha = nodeProgress * labelAlpha * dim
   ctx.translate(cx, cy + labelOffsetY)
   ctx.rotate(labelRot)
   // Libellés du petit portrait : un peu réduits, pas autant que le portrait pour rester lisibles
@@ -831,7 +829,8 @@ function drawMediaContent(ctx, media, ms, imageCache) {
     ctx.beginPath()
     ctx.roundRect(-ms, -ms, ms * 2, ms * 2, 1)
     ctx.clip()
-    ctx.drawImage(mImg, -ms, -ms, ms * 2, ms * 2)
+    // Recadrée au centre comme les portraits : un souvenir horizontal ou vertical n'est plus tassé dans le carré
+    drawImageCover(ctx, mImg, -ms, -ms, ms * 2, ms * 2)
     ctx.restore()
   } else if (media.type === 'video') {
     ctx.fillStyle = '#3D3731'
@@ -932,7 +931,26 @@ function resolveFrameType(person, img) {
   return resolveFrameKind(person.frameType || 'round', ratio, cropShape(person.avatarCrop))
 }
 
-function drawFrame(ctx, frameType, person, img, hint = 0) {
+function drawToVerifyMark(ctx) {
+  const r = 9
+  const x = PERSON_R * 0.74, y = -PERSON_R * 0.74
+  ctx.shadowColor = 'transparent'
+  ctx.fillStyle = '#FFFFFF'
+  ctx.beginPath()
+  ctx.arc(x, y, r + 1.5, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = '#D2694A'
+  ctx.beginPath()
+  ctx.arc(x, y, r, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = '#FFFFFF'
+  ctx.font = '600 12px "DM Sans", system-ui, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('?', x, y + 0.5)
+}
+
+function drawFrame(ctx, frameType, person, img) {
   if (frameType === 'polaroid') {
     const pw = PERSON_R + 4
     const ph = PERSON_R + 4
@@ -950,7 +968,7 @@ function drawFrame(ctx, frameType, person, img, hint = 0) {
     ctx.beginPath()
     ctx.roundRect(-pw, -ph, pw * 2, ph * 2, 2)
     ctx.clip()
-    drawPersonImage(ctx, img, person, -pw, -ph, pw * 2, ph * 2, hint)
+    drawPersonImage(ctx, img, person, -pw, -ph, pw * 2, ph * 2)
   } else if (frameType === 'square') {
     const s = PERSON_R + 4
     const pad = 3
@@ -966,7 +984,7 @@ function drawFrame(ctx, frameType, person, img, hint = 0) {
     ctx.beginPath()
     ctx.roundRect(-s, -s, s * 2, s * 2, 2)
     ctx.clip()
-    drawPersonImage(ctx, img, person, -s, -s, s * 2, s * 2, hint)
+    drawPersonImage(ctx, img, person, -s, -s, s * 2, s * 2)
   } else if (frameType === 'rect') {
     const ratio = img?.naturalWidth && img?.naturalHeight
       ? img.naturalWidth / img.naturalHeight
@@ -988,7 +1006,7 @@ function drawFrame(ctx, frameType, person, img, hint = 0) {
     ctx.beginPath()
     ctx.roundRect(-rw, -rh, rw * 2, rh * 2, 3)
     ctx.clip()
-    drawPersonImage(ctx, img, person, -rw, -rh, rw * 2, rh * 2, hint)
+    drawPersonImage(ctx, img, person, -rw, -rh, rw * 2, rh * 2)
   } else {
     ctx.fillStyle = '#FFFFFF'
     ctx.beginPath()
@@ -1003,14 +1021,14 @@ function drawFrame(ctx, frameType, person, img, hint = 0) {
     ctx.beginPath()
     ctx.arc(0, 0, PERSON_R, 0, Math.PI * 2)
     ctx.clip()
-    drawPersonImage(ctx, img, person, -PERSON_R, -PERSON_R, PERSON_R * 2, PERSON_R * 2, hint)
+    drawPersonImage(ctx, img, person, -PERSON_R, -PERSON_R, PERSON_R * 2, PERSON_R * 2)
   }
 }
 
 // ============================================================
 // Dessiner l'image ou le placeholder initiales
 // ============================================================
-function drawPersonImage(ctx, img, person, x, y, w, h, hint = 0) {
+function drawPersonImage(ctx, img, person, x, y, w, h) {
   if (img) {
     drawImageCover(ctx, img, x, y, w, h, person.avatarCrop)
     if (!person.isAlive) {
@@ -1022,25 +1040,9 @@ function drawPersonImage(ctx, img, person, x, y, w, h, hint = 0) {
     ctx.fillRect(x, y, w, h)
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    // Au survol, chez le propriétaire en modification, les initiales cèdent la place à « + photo »
-    const baseAlpha = ctx.globalAlpha
-    if (hint > 0.01) {
-      ctx.fillStyle = `rgba(248, 228, 219, ${hint})`
-      ctx.fillRect(x, y, w, h)
-    }
-    ctx.globalAlpha = baseAlpha * (1 - hint)
     ctx.fillStyle = COLORS.text
     ctx.font = '400 16px "Newsreader", Georgia, serif'
     ctx.fillText((person.firstName[0] || '') + (person.lastName[0] || ''), 0, 0)
-    if (hint > 0.01) {
-      ctx.globalAlpha = baseAlpha * hint
-      ctx.fillStyle = '#93402A'
-      ctx.font = '300 22px "DM Sans", system-ui, sans-serif'
-      ctx.fillText('+', 0, -6)
-      ctx.font = '500 9.5px "DM Sans", system-ui, sans-serif'
-      ctx.fillText(t('photo'), 0, 10)
-    }
-    ctx.globalAlpha = baseAlpha
   }
 }
 
@@ -1062,7 +1064,6 @@ function drawImageCover(ctx, img, x, y, w, h, crop = null) {
 // ============================================================
 export function drawNodes(ctx, layoutData, posMap, entrance, entranceActive, elapsed, renderState) {
   const view = renderState.view || null
-  photoPlaceholderHitAreas.length = 0
   layoutData.children.forEach(node => {
     const pos = posMap.get(node.id)
     if (!pos) return

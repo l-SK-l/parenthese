@@ -1,4 +1,4 @@
-import type { Annotation, MediaItem, ParentChildLink, Person, Union } from '@prisma/client'
+import type { Annotation, MediaItem, MediaPersonTag, ParentChildLink, Person, Union } from '@prisma/client'
 
 import { sanitizeAnnotationContentForRead } from '../lib/annotation-content.js'
 import { readAvatarCrop, type AvatarCrop } from '../lib/avatar-crop.js'
@@ -15,6 +15,7 @@ export type GraphPayload = {
     birthDate: string | null
     deathDate: string | null
     isDeceased: boolean
+    toVerify: boolean
     birthPlace: string | null
     deathPlace: string | null
     profession: string | null
@@ -53,6 +54,8 @@ export type GraphPayload = {
     source: string | null
     displayOrder: number
     isFeatured: boolean
+    // Personnes identifiées sur le souvenir, point facultatif sur le visage (0 à 1)
+    people: Array<{ personId: string; x: number | null; y: number | null }>
   }>
   annotations: Array<{
     id: string
@@ -81,7 +84,17 @@ export function buildGraphPayload(
   links: ParentChildLink[],
   medias: MediaItem[] = [],
   annotations: Annotation[] = [],
+  mediaPeople: Pick<MediaPersonTag, 'mediaId' | 'personId' | 'x' | 'y'>[] = [],
 ): GraphPayload {
+  // Une personne supprimée n'est plus montrée sur les photos où elle était identifiée
+  const livingIds = new Set(persons.map((person) => person.id))
+  const peopleByMedia = new Map<string, Array<{ personId: string; x: number | null; y: number | null }>>()
+  for (const tag of mediaPeople) {
+    if (!livingIds.has(tag.personId)) continue
+    const list = peopleByMedia.get(tag.mediaId) ?? []
+    list.push({ personId: tag.personId, x: tag.x, y: tag.y })
+    peopleByMedia.set(tag.mediaId, list)
+  }
   // Keep DB order from route queries to preserve sibling and union ordering semantics.
   return {
     persons: persons.map((person) => ({
@@ -93,6 +106,7 @@ export function buildGraphPayload(
         birthDate: formatDate(person.birthDate),
         deathDate: formatDate(person.deathDate),
         isDeceased: Boolean(person.isDeceased) && !person.deathDate,
+        toVerify: Boolean(person.toVerify),
         birthPlace: person.birthPlace,
         deathPlace: person.deathPlace,
         profession: person.profession,
@@ -131,6 +145,7 @@ export function buildGraphPayload(
         source: media.source,
         displayOrder: media.displayOrder,
         isFeatured: media.isFeatured,
+        people: peopleByMedia.get(media.id) ?? [],
       })),
     annotations: annotations.map((ann) => ({
         id: ann.id,

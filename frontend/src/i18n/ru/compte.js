@@ -70,6 +70,8 @@ export default {
   "Supprimer définitivement": "Удалить навсегда",
   // "My account" panel (AccountPanel)
   "Mon compte": "Мой аккаунт",
+  "Dans cet arbre": "В этом древе",
+  "Qui êtes-vous dans cet arbre ?": "Кто вы в этом древе?",
   "Vous apparaissez dans cet arbre sous ce nom et avec cette photo.": "В этом древе вы отображаетесь с этим именем и фото.",
   "Dites-nous qui vous êtes dans cet arbre, votre nom et votre photo viendront de votre fiche.": "Укажите, кто вы в этом древе: имя и фото возьмутся из вашей карточки.",
   "Je suis cette personne": "Это я",

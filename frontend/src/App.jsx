@@ -51,7 +51,7 @@ import {
   reorderSiblings,
   uploadPersonMedia,
 } from './api/treeApi'
-import { fetchImmichConfig, getImmichErrorMessage, unassignImmichPerson } from './api/immichApi.js'
+import { getImmichErrorMessage, unassignImmichPerson } from './api/immichApi.js'
 import { fetchAuthOptions, oidcStartUrl } from './api/authApi'
 import { useAuth } from './hooks/useAuth'
 import { useTreeAccess, getTreeTokenStorageKey, getSlugFromPathname, readTreeAccessRole, TREE_ID_FROM_ENV } from './hooks/useTreeAccess'
@@ -132,8 +132,9 @@ function generateSecurePassword() {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
+// Sans compte (visiteur par mot de passe), le choix reste dans ce navigateur pour cet arbre
 function getAccountSelfPersonStorageKey(userEmail, treeId) {
-  return `account_self_person_${userEmail || 'unknown'}_${treeId || 'none'}`
+  return `account_self_person_${userEmail || 'visiteur'}_${treeId || 'none'}`
 }
 
 function buildContributionChangesFromDraft(draft = {}) {
@@ -316,6 +317,7 @@ function buildContributionChangesFromDraft(draft = {}) {
       if (source.isAlive === true) after.deathDate = null
       after.isDeceased = source.isAlive === false
     }
+    if (Object.prototype.hasOwnProperty.call(source, 'toVerify')) after.toVerify = Boolean(source.toVerify)
 
     if (Object.keys(after).length > 0) {
       changes.push({
@@ -804,7 +806,7 @@ function App() {
 
   useEffect(() => {
     const treeId = tree.treeContext.treeId
-    if (!treeId || !accountEmail) {
+    if (!treeId) {
       setLinkedSelfPersonId('')
       return
     }
@@ -818,7 +820,7 @@ function App() {
   }, [accountEmail, tree.treeContext.treeId])
 
   useEffect(() => {
-    if (!linkedSelfPersonId || !tree.treeContext.treeId || !accountEmail) {
+    if (!linkedSelfPersonId || !tree.treeContext.treeId) {
       return
     }
 
@@ -833,11 +835,27 @@ function App() {
     }
   }, [accountEmail, linkedSelfPersonId, tree.graphRevision, tree.treeContext.treeId])
 
-  // Annotations canvas (dessin, stickers, texte)
+  // Annotations canvas (dessin, stickers, texte). La galaxie remplit annotationViewRef à chaque image :
+  // centres des portraits de l'onglet affiché et annotations dessinées, pour poser et toucher au bon endroit
+  const annotationViewRef = useRef(null)
   const annot = useAnnotations({
     editModeActive: editMode.isActive,
     updateDraft: editMode.updateDraft,
+    viewRef: annotationViewRef,
   })
+
+  // Anciennes annotations rattachées à leur personne par la galaxie : enregistrées une fois, style seul
+  // (les autres champs ne sont pas envoyés). Sans droit d'administration, l'ancre reste calculée à chaque ouverture.
+  const persistAnnotationAnchors = useCallback((anchored) => {
+    const token = auth.userAuth.token
+    const treeId = tree.treeContext.treeId
+    if (isDemoMode || !userRole.isAdmin || !token || !treeId) return
+    const update = anchored
+      .filter((ann) => !String(ann.id).startsWith('local-'))
+      .map((ann) => ({ id: ann.id, style: ann.style }))
+    if (!update.length) return
+    batchAnnotations(treeId, { update }, token).catch((err) => console.error('Failed to save annotation anchors:', err))
+  }, [isDemoMode, userRole.isAdmin, auth.userAuth.token, tree.treeContext.treeId])
 
   // Quitter la fiche (changer de personne, la fermer, sortir du mode modification, envoyer, ouvrir un
   // souvenir) : ses changements sont enregistrés d'abord. Faux si ça échoue : la fiche reste ouverte
@@ -1332,6 +1350,7 @@ function App() {
             if (rawChanges.isAlive === true) payload.deathDate = null
             payload.isDeceased = rawChanges.isAlive === false
           }
+          if (Object.prototype.hasOwnProperty.call(rawChanges, 'toVerify')) payload.toVerify = Boolean(rawChanges.toVerify)
           if (Object.prototype.hasOwnProperty.call(rawChanges, 'note')) payload.notes = rawChanges.note || null
 
           if (Object.keys(payload).length > 0) {
@@ -1622,6 +1641,7 @@ function App() {
           localPerson.isAlive = changes.isAlive === true
           localPerson.isDeceased = changes.isAlive === false && !localPerson.deathYear
         }
+        if (Object.prototype.hasOwnProperty.call(changes, 'toVerify')) localPerson.toVerify = Boolean(changes.toVerify)
         tree.setSelectedPerson({ ...localPerson })
       }
       return
@@ -1648,6 +1668,7 @@ function App() {
       if (changes.isAlive === true) payload.deathDate = null
       payload.isDeceased = changes.isAlive === false
     }
+    if (Object.prototype.hasOwnProperty.call(changes, 'toVerify')) payload.toVerify = Boolean(changes.toVerify)
     if (Object.prototype.hasOwnProperty.call(changes, 'note')) payload.notes = changes.note || null
 
     if (Object.keys(payload).length > 0) {
@@ -1714,51 +1735,6 @@ function App() {
       return false
     }
   }, [auth.userAuth.token, tree.treeContext.accessToken, tree.treeContext.treeId, refreshTreeAndKeepSelection])
-
-  // « + photo » dans l'arbre : le sélecteur part dans le clic (Safari iOS refuse un input file ouvert hors geste),
-  // puis la fenêtre de recadrage s'ouvre dans la fiche de la personne
-  const portraitInputRef = useRef(null)
-  const portraitPickerPersonIdRef = useRef(null)
-  const [pendingPortraitCrop, setPendingPortraitCrop] = useState(null)
-  const [photoSourceRequest, setPhotoSourceRequest] = useState(null)
-  const [immichSourceReady, setImmichSourceReady] = useState(false)
-
-  // Administrateur : Immich proposé dans le menu des sources seulement s'il est configuré
-  useEffect(() => {
-    let cancelled = false
-    const treeId = tree.treeContext.treeId
-    const token = tree.treeContext.accessToken || auth.userAuth.token
-    if (!userRole.isAdmin || !tree.canEditCurrentTree || !treeId || !token) {
-      setImmichSourceReady(false)
-      return undefined
-    }
-    fetchImmichConfig(treeId, token)
-      .then(({ config }) => { if (!cancelled) setImmichSourceReady(Boolean(config?.configured)) })
-      .catch(() => { if (!cancelled) setImmichSourceReady(false) })
-    return () => { cancelled = true }
-  }, [userRole.isAdmin, tree.canEditCurrentTree, tree.treeContext.treeId, tree.treeContext.accessToken, auth.userAuth.token])
-
-  const handlePhotoPlaceholderClick = useCallback((personId) => {
-    // En modification avec Immich : le menu des sources s'ouvre dans la fiche (le badge en est l'ancre)
-    if (editMode.isActive && immichSourceReady) {
-      setPhotoSourceRequest({ personId })
-    } else {
-      // Sans menu : le sélecteur de fichiers part tout de suite, dans le clic
-      portraitPickerPersonIdRef.current = personId
-      portraitInputRef.current?.click()
-    }
-    handlePersonSelect(personId)
-  }, [editMode.isActive, immichSourceReady, handlePersonSelect])
-
-  const handlePortraitPicked = useCallback(async (event) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    const personId = portraitPickerPersonIdRef.current
-    portraitPickerPersonIdRef.current = null
-    if (!file || personId === null) return
-    const result = await handlePersonAvatarUpload(personId, file)
-    if (result?.previewUrl) setPendingPortraitCrop({ personId, src: result.previewUrl })
-  }, [handlePersonAvatarUpload])
 
   // Visage venu d'Immich : recharger l'arbre pour montrer le nouveau portrait (ou le portrait restant)
   const handleImmichChange = useCallback(async (personId) => {
@@ -2967,7 +2943,7 @@ function App() {
 
   const handleSelectSelfPerson = (personId) => {
     const treeId = tree.treeContext.treeId
-    if (!treeId || !accountEmail) {
+    if (!treeId) {
       return
     }
 
@@ -3245,17 +3221,14 @@ function App() {
         zoomApiRef={galaxyZoomApiRef}
         focusPersonId={tree.treeContext.rootPersonId}
         assetRevision={tree.assetRevision}
-        // « + photo » seulement en modification : en lecture, un clic sur un portrait vide ouvre la fiche (issue #124)
-        photoHint={tree.canEditCurrentTree && editMode.isActive}
-        onPhotoPlaceholderClick={tree.canEditCurrentTree && editMode.isActive ? handlePhotoPlaceholderClick : null}
         reorderEnabled={canReorderSiblings}
         onReorderSiblings={handleReorderSiblings}
         familyTabs={familyTabs}
+        annotationViewRef={annotationViewRef}
+        onAnnotationsAnchored={persistAnnotationAnchors}
+        selfPersonId={linkedSelfPersonId || null}
       />
       <ZoomControl zoomApiRef={galaxyZoomApiRef} />
-      {tree.canEditCurrentTree && (
-        <input ref={portraitInputRef} type="file" accept="image/*" className="pc-hidden-input" onChange={handlePortraitPicked} />
-      )}
       {tree.selectedPerson && (
         <PersonCard
           person={tree.selectedPerson}
@@ -3268,10 +3241,6 @@ function App() {
           onAvatarUpload={tree.canEditCurrentTree ? handlePersonAvatarUpload : undefined}
           onAvatarDelete={tree.canEditCurrentTree ? handlePersonAvatarDelete : undefined}
           onAvatarCrop={tree.canEditCurrentTree ? handlePersonAvatarCrop : undefined}
-          pendingPortraitCrop={pendingPortraitCrop}
-          onPendingPortraitCropDone={() => setPendingPortraitCrop(null)}
-          photoSourceRequest={photoSourceRequest}
-          onPhotoSourceRequestDone={() => setPhotoSourceRequest(null)}
           treeId={tree.treeContext.treeId || null}
           immichToken={tree.treeContext.accessToken || auth.userAuth.token}
           onImmichChange={tree.canEditCurrentTree ? handleImmichChange : undefined}
@@ -3309,6 +3278,23 @@ function App() {
               person,
               media: { ...current, label: payload.caption, lifeEventId: payload.lifeEventId },
             })
+          }}
+          getPerson={(id) => persons.find((p) => p.id === id) || null}
+          allPersons={persons}
+          canTag={Boolean((tree.canEditCurrentTree || tree.canSubmitContribution) && !isDemoMode)}
+          onSavePeople={async (people) => {
+            const { person, media: current } = tree.selectedMedia
+            const result = await media.handleUpdateMediaPeople(person.id, current.id, people)
+            // Appliqué tout de suite (administrateur) : la visionneuse rouvre le souvenir avec ses personnes
+            if (result?.status === 'approved') tree.setSelectedMedia({ person, media: { ...current, people: result.people ?? people } })
+            return result
+          }}
+          onOpenPerson={async (personId) => {
+            const target = persons.find((p) => p.id === personId)
+            if (!target) return
+            tree.setSelectedMedia(null)
+            if (!(await chooseSelectedPerson(target))) return
+            galaxyZoomApiRef.current?.focusPerson?.(target.id)
           }}
         />
       )}
@@ -3354,7 +3340,7 @@ function App() {
         selectedPersonId={linkedSelfPersonId}
         people={persons}
         onSelectPerson={handleSelectSelfPerson}
-        onManageAccount={() => handleUseAccount('login')}
+        onManageAccount={accountEmail ? () => handleUseAccount('login') : undefined}
         onClose={() => setAccountPanelVisible(false)}
       />
       <AdminPanel

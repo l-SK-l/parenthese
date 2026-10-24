@@ -113,6 +113,8 @@ function mapRemotePersonToLocal(person, current = null) {
     // Décédé(e) sans date connue (issue #77)
     isDeceased: Boolean(person?.isDeceased) && !deathYear,
     isAlive: !deathYear && !person?.isDeceased,
+    // « À vérifier » : la famille n'est pas sûre de cette personne
+    toVerify: person ? Boolean(person.toVerify) : Boolean(current?.toVerify),
     frameType: current?.frameType || pickFrameType(person?.id),
     note: person?.notes || null,
     birthPlace: person?.birthPlace || null,
@@ -253,6 +255,10 @@ export function loadGraphData(graph, options = {}) {
         displayOrder: Number.isFinite(media.displayOrder) ? media.displayOrder : index + 1,
         isFeatured: Boolean(media.isFeatured),
         mimeType: media.mimeType || null,
+        // Personnes identifiées sur le souvenir, point facultatif sur le visage (0 à 1)
+        people: (Array.isArray(media.people) ? media.people : [])
+          .filter((tag) => personIdSet.has(tag.personId))
+          .map((tag) => ({ personId: tag.personId, x: tag.x ?? null, y: tag.y ?? null })),
       }
     })
 
@@ -305,6 +311,25 @@ export function getPersonMedias(personId) {
     }
   }
   return mediasByPerson.get(personId) || EMPTY_MEDIAS
+}
+
+// Souvenirs des autres où la personne est identifiée (sa fiche les montre après les siens)
+let taggedIndexSource = null
+let taggedByPerson = new Map()
+
+export function getPersonTaggedMedias(personId) {
+  if (taggedIndexSource !== medias) {
+    taggedIndexSource = medias
+    taggedByPerson = new Map()
+    for (const media of medias) {
+      for (const tag of media.people || []) {
+        if (tag.personId === media.personId) continue
+        if (!taggedByPerson.has(tag.personId)) taggedByPerson.set(tag.personId, [])
+        taggedByPerson.get(tag.personId).push(media)
+      }
+    }
+  }
+  return taggedByPerson.get(personId) || EMPTY_MEDIAS
 }
 
 let personsIndexSource = null

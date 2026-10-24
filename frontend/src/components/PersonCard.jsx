@@ -1,7 +1,7 @@
-﻿import { useState, useEffect, useRef, forwardRef } from 'react'
+import { useState, useEffect, useRef, forwardRef } from 'react'
 import { createPortal } from 'react-dom'
 import { Save, Trash2, Plus, X, Search, Check, Play, ImagePlus, Camera, Crop, Sparkles, ChevronLeft, ChevronRight } from 'lucide-react'
-import { getParents, getChildren, getPersonUnions, getPersonMedias, getDemoLife, getPersonById, filiations, persons, unions } from '../data/mockData'
+import { getParents, getChildren, getPersonUnions, getPersonMedias, getPersonTaggedMedias, getDemoLife, getPersonById, filiations, persons, unions } from '../data/mockData'
 import { fetchPersonLife } from '../api/treeApi.js'
 import LifeTimeline from './LifeTimeline.jsx'
 import MomentSheet from './MomentSheet.jsx'
@@ -54,10 +54,6 @@ const PersonCard = ({
   onAvatarUpload,
   onAvatarDelete,
   onAvatarCrop,
-  pendingPortraitCrop = null,
-  onPendingPortraitCropDone = null,
-  photoSourceRequest = null,
-  onPhotoSourceRequestDone = null,
   treeId = null,
   immichToken = null,
   onImmichChange,
@@ -80,7 +76,7 @@ const PersonCard = ({
   saveOnLeaveRef = null,
 }) => {
   // Souvenirs d'abord quand il y en a, ou quand on peut en ajouter : c'est là qu'est le bouton
-  const [tab, setTab] = useState(() => (getPersonMedias(person.id).length > 0 || canManageMedia ? 'medias' : 'infos'))
+  const [tab, setTab] = useState(() => (getPersonMedias(person.id).length > 0 || getPersonTaggedMedias(person.id).length > 0 || canManageMedia ? 'medias' : 'infos'))
   const [lifeState, setLifeState] = useState({ personId: null, data: null, loading: false, failed: false })
 
   const lifeRequestedFor = useRef(null)
@@ -257,21 +253,6 @@ const PersonCard = ({
   }
   const chooseFileSource = () => { setShowSourceMenu(false); avatarInputRef.current?.click() }
   const chooseImmichSource = () => { setShowSourceMenu(false); setShowImmichPanel(true) }
-
-  // Clic sur « + photo » dans l'arbre : la photo vient d'être envoyée, le recadrage s'ouvre tout de suite
-  useEffect(() => {
-    if (!pendingPortraitCrop || String(pendingPortraitCrop.personId) !== String(person.id)) return
-    setCropState({ src: pendingPortraitCrop.src, mode: 'new', ownsUrl: true })
-    onPendingPortraitCropDone?.()
-  }, [pendingPortraitCrop, person.id, onPendingPortraitCropDone])
-
-  // Clic sur « + photo » dans l'arbre, en modification avec Immich : même menu que le badge, sans clic de plus
-  useEffect(() => {
-    if (!photoSourceRequest || String(photoSourceRequest.personId) !== String(person.id)) return
-    if (immichConfigured === null) return
-    onPhotoSourceRequestDone?.()
-    if (immichUsable) openAvatarPicker()
-  }, [photoSourceRequest, person.id, immichConfigured, immichUsable, onPhotoSourceRequestDone]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Focus search input when relation search opens
   useEffect(() => {
@@ -461,6 +442,8 @@ const PersonCard = ({
     return childFiliations[0]
   })()
   const personMedias = getPersonMedias(person.id)
+  // Souvenirs des autres où la personne est identifiée : après les siens, ouverts au nom de leur propriétaire
+  const taggedMedias = getPersonTaggedMedias(person.id).filter((m) => m.type === 'photo' || m.type === 'video')
   // Filiation d'adoption entre un enfant et un parent (lien direct ou via une union)
   const parentageAdopted = (childId, parentId) => filiations.some((f) => (
     String(f.childId) === String(childId)
@@ -688,25 +671,12 @@ const PersonCard = ({
               disabled={avatarActionLoading}
             />
           )}
-          {/* Portrait vide chez le propriétaire : le cadre lui-même invite à poser la photo, sans passer par l'édition */}
-          {!person.photo && onAvatarUpload && !editMode ? (
-            <button
-              type="button"
-              className="pc-photo pc-photo--add"
-              onClick={() => avatarInputRef.current?.click()}
-              disabled={avatarActionLoading}
-              aria-label={t('Ajouter une photo')}
-              title={t('Ajouter une photo')}
-            >
-              <ImagePlus size={22} strokeWidth={1.8} aria-hidden="true" />
-            </button>
-          ) : (
-            <div className="pc-photo">
-              {person.photo
-                ? <img src={person.photo} alt={fullNameLabel(person)} onLoad={(event) => setPhotoSize({ w: event.currentTarget.naturalWidth, h: event.currentTarget.naturalHeight })} style={photoStyle} />
-                : <span className="pc-photo-initials">{initials}</span>}
-            </div>
-          )}
+          {/* Hors modification, le portrait se regarde : la photo s'ajoute ou se change en mode modification */}
+          <div className="pc-photo">
+            {person.photo
+              ? <img src={person.photo} alt={fullNameLabel(person)} onLoad={(event) => setPhotoSize({ w: event.currentTarget.naturalWidth, h: event.currentTarget.naturalHeight })} style={photoStyle} />
+              : <span className="pc-photo-initials">{initials}</span>}
+          </div>
           {editMode && onAvatarUpload && (
             <button
               ref={sourceBtnRef}
@@ -782,6 +752,7 @@ const PersonCard = ({
                 </button>
               </span>
             )}
+            {!editMode && person.toVerify && <span className="pz-tag pz-tag--accent pz-tag--dot">{t('À vérifier')}</span>}
             {!editMode && person.profession && <span className="pz-tag">{person.profession}</span>}
           </div>
         </div>
@@ -826,7 +797,7 @@ const PersonCard = ({
         {/* ── Souvenirs ── */}
         {tab === 'medias' && (
           <div className="pc-souvenirs">
-            {personMedias.length === 0 && (
+            {personMedias.length === 0 && taggedMedias.length === 0 && (
               <div className="pc-empty">
                 <p className="pz-sub">{t('Pas encore de souvenir pour {name}.', { name: firstNameLabel(person) })}</p>
                 <p className="pz-small">{canManageMedia ? t('Une photo, une anecdote, sa voix. Vous pouvez ajouter le premier.') : t('Une photo, une anecdote, sa voix.')}</p>
@@ -870,6 +841,31 @@ const PersonCard = ({
                   </button>
                 )}
               </div>
+            )}
+
+            {taggedMedias.length > 0 && (
+              <section className="pc-tagged" aria-label={t('Avec {name}', { name: firstNameLabel(person) })}>
+                <h3 className="pc-tagged-title">{t('Avec {name}', { name: firstNameLabel(person) })}</h3>
+                <div className="pc-grid">
+                  {taggedMedias.map((media) => {
+                    const owner = getPersonById(media.personId)
+                    return (
+                      <button
+                        key={media.id}
+                        type="button"
+                        className={`pc-tile pc-tile--${media.type}`}
+                        onClick={() => owner && onMediaSelect?.(media, owner)}
+                        title={media.label || TYPE_LABELS[media.type]}
+                      >
+                        {media.type === 'photo' && media.url
+                          ? <img src={media.url} alt={media.label || ''} loading="lazy" />
+                          : <span className="pc-tile-video"><Play size={18} fill="currentColor" strokeWidth={0} /></span>}
+                        {media.label && <span className="pc-tile-label">{media.label}</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+              </section>
             )}
 
             {otherMedias.length > 0 && (
@@ -951,6 +947,21 @@ const PersonCard = ({
                     >
                       <span className="pc-alive-dot" />
                       {getEditValue('isAlive', person.isAlive) ? t('En vie') : editSex === 'male' ? t('Décédé') : editSex === 'female' ? t('Décédée') : t('Décédé(e)')}
+                    </button>
+                  </div>
+                )}
+                {editMode && (
+                  // La famille n'est pas sûre de cette personne : marquée sur l'arbre et dans la fiche (retour d'Anaïs, 23/10)
+                  <div className="pc-row">
+                    <span className="pc-label">{t('Vérification')}</span>
+                    <button
+                      type="button"
+                      aria-pressed={Boolean(getEditValue('toVerify', person.toVerify))}
+                      className={`pc-alive pc-verify ${getEditValue('toVerify', person.toVerify) ? 'is-on' : ''}`}
+                      onClick={() => handleFieldChange('toVerify', !getEditValue('toVerify', person.toVerify))}
+                    >
+                      <span className="pc-alive-dot" />
+                      {t('À vérifier')}
                     </button>
                   </div>
                 )}

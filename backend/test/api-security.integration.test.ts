@@ -91,6 +91,11 @@ const { prismaMock } = vi.hoisted(() => ({
       create: vi.fn(),
       update: vi.fn(),
     },
+    mediaPersonTag: {
+      findMany: vi.fn().mockResolvedValue([]),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
     auditLog: {
       create: vi.fn(),
       findMany: vi.fn(),
@@ -1143,6 +1148,33 @@ describe('API security and authz', () => {
     expect(response.statusCode).toBe(200)
     expect(prismaMock.contributionSession.update).toHaveBeenCalled()
     expect(prismaMock.contributionChange.update).toHaveBeenCalled()
+    await app.close()
+  })
+
+  it('« à vérifier » proposé par la famille : appliqué à l’approbation, en création comme en modification', async () => {
+    const app = createApp()
+    const token = await createUserToken(app)
+
+    prismaMock.contributionSession.findFirst.mockResolvedValue({
+      id: 'session-1',
+      treeId: 'tree-1',
+      status: 'pending',
+      changes: [
+        { id: 'change-1', entityType: 'person', action: 'create', entityId: null, beforeJson: null, afterJson: { firstName: 'Alice', lastName: 'Martin', toVerify: true }, conflictState: 'none' },
+        { id: 'change-2', entityType: 'person', action: 'update', entityId: 'person-1', beforeJson: { toVerify: false }, afterJson: { toVerify: true }, conflictState: 'none' },
+      ],
+    })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/trees/tree-1/contributions/sessions/session-1/review',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { decision: 'approved' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(prismaMock.person.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ firstName: 'Alice', toVerify: true }) }))
+    expect(prismaMock.person.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: 'person-1' }), data: expect.objectContaining({ toVerify: true }) }))
     await app.close()
   })
 

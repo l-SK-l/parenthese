@@ -95,6 +95,11 @@ const { prismaMock } = vi.hoisted(() => ({
       create: vi.fn(),
       update: vi.fn(),
     },
+    mediaPersonTag: {
+      findMany: vi.fn().mockResolvedValue([]),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
     auditLog: {
       create: vi.fn(),
       findMany: vi.fn(),
@@ -1278,6 +1283,28 @@ describe('Surnom (nickname) en écriture directe', () => {
     const token = await createUserToken(app)
     const res = await app.inject({ method: 'PATCH', url: '/trees/tree-1/persons/person-1', headers: { authorization: `Bearer ${token}` }, payload: { nickname: 'x'.repeat(121) } })
     expect(res.statusCode).toBe(400)
+    await app.close()
+  })
+})
+
+describe('« À vérifier » en écriture directe (retour d’Anaïs, 23/10)', () => {
+  it('POST et PATCH posent et retirent le drapeau, absent = inchangé', async () => {
+    const app = createApp()
+    const token = await createUserToken(app)
+    const headers = { authorization: `Bearer ${token}` }
+
+    const created = await app.inject({ method: 'POST', url: '/trees/tree-1/persons', headers, payload: { firstName: 'Jeanne', lastName: 'Martin', toVerify: true } })
+    expect(created.statusCode).toBe(201)
+    expect(prismaMock.person.create.mock.calls.at(-1)[0].data).toMatchObject({ toVerify: true })
+
+    const patch = (payload: object) => app.inject({ method: 'PATCH', url: '/trees/tree-1/persons/person-1', headers, payload })
+    expect((await patch({ toVerify: true })).statusCode).toBe(200)
+    expect(prismaMock.person.updateMany.mock.calls.at(-1)[0].data).toMatchObject({ toVerify: true })
+    expect((await patch({ toVerify: false })).statusCode).toBe(200)
+    expect(prismaMock.person.updateMany.mock.calls.at(-1)[0].data).toMatchObject({ toVerify: false })
+    expect((await patch({ nickname: 'Loulou' })).statusCode).toBe(200)
+    expect(prismaMock.person.updateMany.mock.calls.at(-1)[0].data).not.toHaveProperty('toVerify')
+    expect((await patch({ toVerify: 'oui' })).statusCode).toBe(400)
     await app.close()
   })
 })

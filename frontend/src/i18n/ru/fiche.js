@@ -40,6 +40,7 @@ export default {
   'Lieu de naissance': 'Место рождения',
   'Nom de naissance': 'Фамилия при рождении',
   'Statut': 'Статус',
+  'Vérification': 'Проверка',
   'En vie': 'Жив(а)',
   'Décédé(e)': 'Умер(ла)',
   'Décès': 'Смерть',
