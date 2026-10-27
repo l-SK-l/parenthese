@@ -5,6 +5,7 @@ import PersonCard from './components/PersonCard.jsx'
 import { FamilyWelcome, SouvenirPicker } from './components/FamilyOnboarding.jsx'
 import { HELP_URL } from './utils/siteLinks.js'
 import { firstNameLabel } from './utils/personName.js'
+import { useUndoable } from './hooks/useUndoable.js'
 import { hasSeenFamilyWelcome, markFamilyWelcomeSeen } from './utils/familyWelcome'
 import MediaViewer from './components/MediaViewer'
 import MediaManagerPanel from './components/MediaManagerPanel'
@@ -12,6 +13,7 @@ import AdminPanel from './components/AdminPanel'
 import AccessGate from './components/AccessGate'
 import EntryChoice from './components/EntryChoice'
 import AccountDashboard from './components/AccountDashboard'
+import InvitationScreen from './components/InvitationScreen.jsx'
 import AccountPanel from './components/AccountPanel'
 import TreeCreationWizard from './components/TreeCreationWizard'
 import PhotoStartPanel from './components/PhotoStartPanel.jsx'
@@ -36,6 +38,7 @@ import {
   createUnion,
   batchAnnotations,
   deletePersonAvatar,
+  deletePersonMedia,
   getTree,
   importGedcom,
   linkTreeAccess,
@@ -52,7 +55,7 @@ import {
   uploadPersonMedia,
 } from './api/treeApi'
 import { getImmichErrorMessage, unassignImmichPerson } from './api/immichApi.js'
-import { fetchAuthOptions, oidcStartUrl } from './api/authApi'
+import { fetchAuthOptions, oidcLinkUrl, oidcStartUrl, requestOidcLinkTicket } from './api/authApi'
 import { useAuth } from './hooks/useAuth'
 import { useTreeAccess, getTreeTokenStorageKey, getSlugFromPathname, readTreeAccessRole, TREE_ID_FROM_ENV } from './hooks/useTreeAccess'
 import { useMediaManager } from './hooks/useMediaManager'
@@ -63,7 +66,7 @@ import { useEditMode } from './hooks/useEditMode'
 import { useAnnotations } from './hooks/useAnnotations'
 import AnnotationToolbar from './components/annotations/AnnotationToolbar'
 import TextInputOverlay from './components/annotations/TextInputOverlay'
-import { filiations, getChildren, getParents, getPersonUnions, medias, persons, unions } from './data/mockData'
+import { filiations, getChildren, getParents, getPersonUnions, medias, persons, replaceGraph, unions } from './data/mockData'
 import { readGedcomFile } from './utils/gedcomText'
 import { readGedcomBundle, zipErrorMessage } from './utils/gedcomBundle.js'
 import { materializeFile } from './utils/zipReader.js'
@@ -84,6 +87,9 @@ import './App.css'
 import './styles/pz.css'
 import { setBooting } from './bootSignal.js'
 import { saveContributorName } from './utils/contributorName'
+import { ghostsFromChanges, hasGhosts, mergeGhosts } from './utils/ghosts'
+import ProposalCard from './components/ProposalCard'
+import { summarizeChanges } from './utils/proposalSummary'
 
 function yearToIsoDate(value) {
   if (value === null || value === undefined || value === '') {
@@ -252,6 +258,11 @@ function buildContributionChangesFromDraft(draft = {}) {
         birthDate: person.birthDate || null,
         deathDate: person.deathDate || null,
         isDeceased: !person.deathDate && Boolean(person.isDeceased),
+        // Personne venue d'une source publique (panneau « Chercher quelqu'un ») : lieux, « à vérifier » et source
+        ...(person.birthPlace ? { birthPlace: person.birthPlace } : {}),
+        ...(person.deathPlace ? { deathPlace: person.deathPlace } : {}),
+        ...(person.toVerify ? { toVerify: true } : {}),
+        ...(person.notes ? { notes: person.notes } : {}),
       },
     })
 
@@ -487,7 +498,37 @@ function readOidcReturn() {
   return { code: params.get('oidc'), error: params.get('oidc_error') }
 }
 const OIDC_RETURN = readOidcReturn()
+
+// Lien d'invitation à co-gérer un arbre (/invitation/<jeton>, issue #145) : lu une fois au chargement, la page
+// d'invitation passe avant tout le reste jusqu'à ce que l'arbre s'ouvre
+function readInvitationToken() {
+  if (typeof window === 'undefined') return null
+  return window.location.pathname.match(/^\/invitation\/([A-Za-z0-9_-]{20,100})$/)?.[1] ?? null
+}
+const INVITATION_TOKEN = readInvitationToken()
 let oidcSignIn = null
+
+// Retire une personne du graphe en mémoire, avec ses unions, ses liens et ses médias. Renvoie les tableaux tels
+// qu'ils étaient avant le retrait, ou null si la personne n'y était plus
+function removePersonFromGraph(personId) {
+  const id = String(personId)
+  if (!persons.some((candidate) => String(candidate.id) === id)) return null
+  const snapshot = { persons, unions, filiations, medias }
+  const removedUnionIds = new Set(unions
+    .filter((union) => String(union.partner1Id) === id || String(union.partner2Id) === id)
+    .map((union) => union.id))
+  replaceGraph({
+    persons: persons.filter((candidate) => String(candidate.id) !== id),
+    unions: unions.filter((union) => !removedUnionIds.has(union.id)),
+    filiations: filiations.filter((filiation) => (
+      String(filiation.childId) !== id
+      && String(filiation.parentId) !== id
+      && !(filiation.unionId && removedUnionIds.has(filiation.unionId))
+    )),
+    medias: medias.filter((media) => String(media.personId) !== id),
+  })
+  return snapshot
+}
 
 function App() {
   const auth = useAuth()
@@ -526,6 +567,17 @@ function App() {
   })
 
   const [adminPanelVisible, setAdminPanelVisible] = useState(false)
+  // Onglet de famille ouvert : l'adresse de la page le porte (?famille=<charnière>), et le lien à envoyer à la
+  // famille aussi, pour qu'il ouvre l'arbre sur cette famille
+  const [initialFamilyKey] = useState(() => new URLSearchParams(window.location.search).get('famille'))
+  const [openFamily, setOpenFamily] = useState(null)
+  const handleFamilyChange = useCallback((family) => {
+    setOpenFamily(family)
+    const url = new URL(window.location.href)
+    if (family) url.searchParams.set('famille', family.key)
+    else url.searchParams.delete('famille')
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+  }, [])
   // Grandes belles-familles dans des onglets (réglage de ce navigateur, voir Paramètres de l'arbre)
   const [familyTabs, setFamilyTabsState] = useState(() => { try { return localStorage.getItem('parenthese.familyTabs') !== 'off' } catch { return true } })
   const setFamilyTabs = useCallback((on) => { setFamilyTabsState(on); try { localStorage.setItem('parenthese.familyTabs', on ? 'on' : 'off') } catch { /* navigateur sans stockage */ } }, [])
@@ -676,16 +728,67 @@ function App() {
   }, [auth.accountTrees, tree.treeContext.treeId, tree.treeContext.treeName])
 
   const isDemoMode = tree.treeContext.accessMode === 'demo'
+
   const canEditInCurrentMode = tree.canSubmitContribution || isDemoMode
 
   // Recherche de personnes avec scoring
-  const search = usePersonSearch(persons)
+  const search = usePersonSearch(persons, tree.graphRevision)
 
   // Mode édition avec auto-save
   const editMode = useEditMode({
     treeId: tree.treeContext.treeId,
     canEdit: canEditInCurrentMode,
   })
+
+  // Fantômes (1.5.1) : ce qui est proposé et pas encore dans l'arbre, dessiné en transparence à sa place.
+  // Qui gère l'arbre voit les propositions en attente ; la famille voit son brouillon et ce qu'elle a envoyé.
+  const ghostTreeId = tree.treeContext.treeId
+  const ghosts = useMemo(() => {
+    if (!ghostTreeId || isDemoMode) return null
+    const graph = { unions }
+    const list = []
+    if (userRole.isAdmin) {
+      for (const session of contrib.contribState.sessions || []) {
+        if (session.status !== 'pending') continue
+        list.push(ghostsFromChanges(session.changes, {
+          source: 'pending', sessionId: session.id, label: session.submittedByLabel, createdAt: session.createdAt,
+          summary: summarizeChanges(session.changes),
+        }, graph))
+      }
+    } else if (tree.canSubmitContribution) {
+      for (const proposal of contrib.sentProposals || []) {
+        list.push(ghostsFromChanges(proposal.changes, {
+          source: 'sent', sessionId: proposal.sessionId, label: proposal.label, createdAt: proposal.createdAt,
+          summary: summarizeChanges(proposal.changes),
+        }, graph))
+      }
+      if (editMode.hasDraft) {
+        const draftChanges = buildContributionChangesFromDraft(editMode.restoreDraft())
+        list.push(ghostsFromChanges(draftChanges, { source: 'draft', key: 'brouillon', summary: summarizeChanges(draftChanges) }, graph))
+      }
+    }
+    const merged = mergeGhosts(list)
+    // Photo posée sur l'arbre : l'adresse se refait depuis son chemin, seulement pour une photo de cet arbre
+    const photoPrefix = `/trees/${ghostTreeId}/annotation-photos/`
+    merged.annotations = merged.annotations.map((ann) => {
+      if (ann.type !== 'photo') return ann
+      try {
+        const parsed = JSON.parse(ann.content)
+        const ownPhoto = typeof parsed.photoPath === 'string' && parsed.photoPath.startsWith(photoPrefix)
+          && /^[A-Za-z0-9-]+$/.test(parsed.photoPath.slice(photoPrefix.length))
+        if (!ownPhoto) return null
+        return { ...ann, content: JSON.stringify({ ...parsed, url: buildMediaUrl(parsed.photoPath, import.meta.env.VITE_API_BASE_URL || '/api') }) }
+      } catch {
+        return null
+      }
+    }).filter(Boolean)
+    return hasGhosts(merged) ? merged : null
+  }, [ghostTreeId, isDemoMode, userRole.isAdmin, tree.canSubmitContribution, contrib.contribState.sessions, contrib.sentProposals, editMode.hasDraft, editMode.draftRevision, tree.graphRevision]) // eslint-disable-line react-hooks/exhaustive-deps
+  const [selectedGhost, setSelectedGhost] = useState(null)
+  // Une proposition relue (ou un brouillon envoyé) emporte son fantôme : la carte ouverte se ferme
+  useEffect(() => {
+    if (selectedGhost && !ghosts?.persons.some((p) => p.id === selectedGhost.id)) setSelectedGhost(null)
+  }, [ghosts, selectedGhost])
 
   const localEntityCounterRef = useRef(0)
   const makeLocalId = useCallback((prefix) => {
@@ -883,9 +986,18 @@ function App() {
   const handlePersonSelect = useCallback(async (personLike) => {
     const personId = personLike && typeof personLike === 'object' ? personLike.id : personLike
     if (personId === null || personId === undefined) {
+      setSelectedGhost(null)
       await chooseSelectedPerson(null)
       return
     }
+    // Personne proposée : sa carte de proposition, pas une fiche (elle n'existe pas encore dans l'arbre)
+    if (personLike && typeof personLike === 'object' && personLike.ghost) {
+      if (!(await leaveSelectedPerson())) return
+      await chooseSelectedPerson(null)
+      setSelectedGhost(personLike)
+      return
+    }
+    setSelectedGhost(null)
 
     const freshPerson = persons.find((candidate) => String(candidate.id) === String(personId)) || personLike || null
     if (!(await leaveSelectedPerson())) return
@@ -950,8 +1062,9 @@ function App() {
       }
       img.onerror = () => URL.revokeObjectURL(img.src)
       img.src = URL.createObjectURL(file)
-    } catch {
-      // silent — user can retry
+    } catch (error) {
+      // Avant la 1.5.1, l'échec passait sous silence : la photo n'apparaissait pas et rien ne disait pourquoi
+      setDraftNotice(getAccountErrorMessage(error) || t("La photo n'a pas pu être envoyée. Réessayez."))
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tree.treeContext.treeId, tree.treeContext.accessToken, auth.userAuth.token])
@@ -1028,7 +1141,26 @@ function App() {
   const [addPersonLoading, setAddPersonLoading] = useState(false)
   const [addPersonError, setAddPersonError] = useState('')
 
-  const handleOpenAddPerson = useCallback(() => {
+  // Ajouter un proche depuis une fiche (1.5.1) : le panneau s'ouvre avec le lien déjà posé, le nom tapé dans la
+  // recherche, et le nom de famille proposé pour un enfant ou un frère ou une sœur
+  const [addPersonPrefill, setAddPersonPrefill] = useState(null)
+  const handleCreateRelative = useCallback(async (type, query = '') => {
+    const person = tree.selectedPerson
+    if (!person) return
+    const [first = '', ...rest] = String(query).trim().split(/\s+/)
+    const inheritsName = type === 'child' || type === 'sibling'
+    const lastName = rest.join(' ') || (inheritsName ? person.lastName || '' : '')
+    const personName = [person.firstName, person.lastName].filter(Boolean).join(' ')
+    if (!(await leaveSelectedPerson())) return
+    await chooseSelectedPerson(null)
+    setAddPersonPrefill({ nonce: Date.now(), firstName: first, lastName, relation: { type, personId: person.id, personName } })
+    handleOpenAddPerson(query ? 'fiche_recherche' : 'fiche')
+  }, [tree.selectedPerson]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Par où l'on ajoute une personne, pour les compteurs d'édition (aucun contenu de l'arbre ne part)
+  const addPersonViaRef = useRef('menu')
+  const handleOpenAddPerson = useCallback((via) => {
+    addPersonViaRef.current = typeof via === 'string' ? via : 'menu'
     setAddPersonError('')
     // Le panneau d'ajout vit dans le mode édition : la famille y entre sans passer par le crayon
     if (!editMode.isActive) editMode.activate()
@@ -1107,7 +1239,7 @@ function App() {
             frameType: 'round',
           }
 
-          persons.push(newPerson)
+          replaceGraph({ persons: [...persons, newPerson] })
 
           for (const rel of formData.relations) {
             if (rel.type === 'spouse') {
@@ -1182,19 +1314,22 @@ function App() {
             birthDate: formData.birthDate || null,
             deathDate: formData.deathDate || null,
             isDeceased: Boolean(formData.isDeceased),
+            birthPlace: formData.birthPlace || null,
+            deathPlace: formData.deathPlace || null,
+            toVerify: Boolean(formData.toVerify),
+            notes: formData.notes || null,
             relations: (formData.relations || []).map((rel) => ({ type: rel.type, personId: rel.personId, adopted: Boolean(rel.adopted) })),
             siblingParentLinks,
           },
         ]
         editMode.updateDraft({ addedPersons })
-        // La personne n'apparaît dans l'arbre qu'après envoi : on passe tout de suite à l'envoi
-        // (prénom, un mot), la famille n'a pas à chercher le bouton
+        trackAppEvent('person_added', { via: addPersonViaRef.current, role: 'family', relations: (formData.relations || []).length, tree_id: opaqueTreeId })
+        // La personne apparaît en fantôme « Brouillon » : la famille peut en ajouter d'autres, puis envoyer une
+        // fois avec le bouton « Envoyer » de la barre (Patch, 25/10). Avant, la fenêtre d'envoi s'ouvrait d'office,
+        // seule façon de montrer qu'un ajout invisible comptait.
         setAddPersonPanelVisible(false)
-        setDraftNotice(t('{name} est dans vos modifications. Envoyez-les quand vous avez fini.', { name: [formData.firstName, formData.lastName].filter(Boolean).join(' ') || t('Nouvelle personne') }))
-        setContribSubmitError('')
-        setContribChanges(buildContribChangesList(editMode.restoreDraft()))
-        setShowContribModal(true)
-        return
+        setDraftNotice(t("{name} est sur l'arbre, en brouillon. Envoyez quand vous avez fini.", { name: [formData.firstName, formData.lastName].filter(Boolean).join(' ') || t('Nouvelle personne') }))
+        return { proposed: true }
       }
 
       if (!auth.userAuth.token) return
@@ -1210,6 +1345,11 @@ function App() {
           birthDate: formData.birthDate,
           deathDate: formData.deathDate,
           isDeceased: Boolean(formData.isDeceased),
+          // Personne venue d'une source publique (panneau « Chercher quelqu'un ») : lieux, « à vérifier » et source
+          ...(formData.birthPlace ? { birthPlace: formData.birthPlace } : {}),
+          ...(formData.deathPlace ? { deathPlace: formData.deathPlace } : {}),
+          ...(formData.toVerify ? { toVerify: true } : {}),
+          ...(formData.notes ? { notes: formData.notes } : {}),
         },
         auth.userAuth.token
       )
@@ -1261,11 +1401,14 @@ function App() {
       })
 
       await tree.refreshCurrentTreeGraph()
+      trackAppEvent('person_added', { via: addPersonViaRef.current, role: 'manager', relations: (formData.relations || []).length, tree_id: opaqueTreeId })
+      return newPerson
     } catch (err) {
       setAddPersonError(err.message || t("Erreur lors de l'ajout de la personne"))
     } finally {
       setAddPersonLoading(false)
     }
+    return null
   }, [auth.userAuth.token, tree.canEditCurrentTree, tree.treeContext.treeId, isDemoMode, makeLocalId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Modal session contribution (contributeurs)
@@ -1330,8 +1473,10 @@ function App() {
       const draft = editMode.restoreDraft()
 
       if (token && treeId) {
-        // Appliquer les modifications de personnes depuis le draft
-        const modifiedPersons = draft.modifiedPersons || {}
+        // Appliquer les modifications de personnes depuis le draft. Ce qui échoue reste dans le brouillon, avec un
+        // message : avant la 1.5.1, l'échec allait à la console et le brouillon était effacé quand même.
+        const failures = []
+        const modifiedPersons = { ...(draft.modifiedPersons || {}) }
         for (const [personId, rawChanges] of Object.entries(modifiedPersons)) {
           const payload = {}
           if (Object.prototype.hasOwnProperty.call(rawChanges, 'firstName')) payload.firstName = rawChanges.firstName || ''
@@ -1356,8 +1501,9 @@ function App() {
           if (Object.keys(payload).length > 0) {
             try {
               await updatePerson(treeId, personId, payload, token)
+              delete modifiedPersons[personId]
             } catch (err) {
-              console.error('Failed to update person:', personId, err)
+              failures.push(getAccountErrorMessage(err))
             }
           }
         }
@@ -1394,16 +1540,30 @@ function App() {
 
         const hasAnnotationChanges = batchPayload.create.length > 0 || batchPayload.update.length > 0 || batchPayload.delete.length > 0
 
+        let annotationsFailed = false
         if (hasAnnotationChanges) {
           try {
             await batchAnnotations(treeId, batchPayload, token)
           } catch (err) {
-            console.error('Failed to submit annotations:', err)
+            annotationsFailed = true
+            failures.push(getAccountErrorMessage(err))
           }
+        }
+
+        if (failures.length > 0) {
+          editMode.updateDraft({
+            modifiedPersons,
+            ...(annotationsFailed ? {} : { addedAnnotations: [], modifiedAnnotations: [], deletedAnnotations: [] }),
+          })
+          editMode.saveDraft()
+          await tree.refreshCurrentTreeGraph({ relayout: false })
+          setDraftNotice(t("Une partie n'a pas été enregistrée ({error}). Elle reste dans vos modifications : réessayez.", { error: failures[0] }))
+          return
         }
       }
 
       await tree.refreshCurrentTreeGraph({ relayout: false })
+      trackAppEvent('tree_edits_saved', { persons: Object.keys(draft.modifiedPersons || {}).length, annotations: (draft.addedAnnotations || []).length, tree_id: opaqueTreeId })
       editMode.clearDraft()
       editMode.deactivate()
     } else {
@@ -1449,9 +1609,13 @@ function App() {
 
       editMode.clearDraft()
       editMode.deactivate()
+      // Les ajouts du brouillon (dessins, photos) restaient affichés comme acceptés : l'arbre est relu, et ce qui
+      // vient d'être envoyé revient en fantôme « En attente »
+      await tree.refreshCurrentTreeGraph({ relayout: false }).catch(() => {})
       setShowContribModal(false)
       setContribSubmitError('')
       setContribSuccess(true)
+      trackAppEvent('proposal_sent', { changes: changes.length, tree_id: opaqueTreeId })
       setDraftNotice('')
       setTimeout(() => setContribSuccess(false), 6000)
     } catch (err) {
@@ -1514,6 +1678,16 @@ function App() {
     }))
     await contrib.handleOpenContributionPanel()
   }, [contrib, resolveContributionShareUrl, tree.treeContext.treeId, tree.canEditCurrentTree, tree.treeContext.accessToken, auth.userAuth.token]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Accepter ou refuser une proposition depuis son fantôme. Une proposition se relit en entier ; « Voir le
+  // détail » ouvre le panneau pour trier changement par changement.
+  const reviewFromTree = (sessionId) => ({
+    busy: contrib.contribState.reviewingSessionId === sessionId,
+    error: contrib.contribState.error,
+    onAccept: () => contrib.handleReviewContributionSession(sessionId, { decision: 'approved' }, 'tree'),
+    onReject: () => contrib.handleReviewContributionSession(sessionId, { decision: 'rejected' }, 'tree'),
+    onOpenDetails: () => { setSelectedGhost(null); handleOpenContributionPanel() },
+  })
 
   const handleContributionPasswordRemember = useCallback(async ({ password }) => {
     const accessToken = auth.userAuth.token || tree.treeContext.accessToken
@@ -1766,59 +1940,63 @@ function App() {
     }
   }, [auth.userAuth.token, tree.treeContext.accessToken, tree.treeContext.treeId, refreshTreeAndKeepSelection])
 
-  // Suppression personne (mode édition, admin)
+  // Suppressions annulables (personne, souvenir, moment) : l'écran change tout de suite, « Annuler » reste
+  // possible quelques secondes, et la requête ne part qu'ensuite (voir hooks/useUndoable.js)
+  const undoable = useUndoable()
+  // Un rechargement de l'arbre vide la sélection : la requête part après le délai, quand une autre fiche
+  // peut être ouverte, et c'est celle-là qu'on garde
+  const selectedPersonIdRef = useRef(null)
+  useEffect(() => { selectedPersonIdRef.current = tree.selectedPerson?.id ?? null }, [tree.selectedPerson])
+  const refreshKeepingSelection = useCallback(
+    (options) => refreshTreeAndKeepSelection(selectedPersonIdRef.current, options),
+    [refreshTreeAndKeepSelection],
+  )
+
+  // Un rechargement de l'arbre pendant le délai ramènerait ce qui vient d'être supprimé : on le retire à nouveau
+  useEffect(() => {
+    if (undoable.reapply()) tree.bumpGraphRevision()
+  }, [tree.graphRevision]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const handlePersonDelete = useCallback(async (personId) => {
     if (!tree.treeContext.treeId && !isDemoMode) return
 
-    if (isDemoMode) {
-      for (let idx = persons.length - 1; idx >= 0; idx -= 1) {
-        if (String(persons[idx].id) === String(personId)) {
-          persons.splice(idx, 1)
-        }
-      }
+    const ownTree = !isDemoMode && tree.canEditCurrentTree
+    if (isDemoMode || ownTree) {
+      const accessToken = ownTree ? (tree.treeContext.accessToken || auth.userAuth.token) : null
+      if (ownTree && !accessToken) return
 
-      const removedUnionIds = new Set()
-      for (let idx = unions.length - 1; idx >= 0; idx -= 1) {
-        const union = unions[idx]
-        if (
-          String(union.partner1Id) === String(personId)
-          || String(union.partner2Id) === String(personId)
-        ) {
-          removedUnionIds.add(union.id)
-          unions.splice(idx, 1)
-        }
-      }
-
-      for (let idx = filiations.length - 1; idx >= 0; idx -= 1) {
-        const filiation = filiations[idx]
-        const touchesPerson = (
-          String(filiation.childId) === String(personId)
-          || String(filiation.parentId) === String(personId)
-        )
-        const touchesRemovedUnion = filiation.unionId && removedUnionIds.has(filiation.unionId)
-        if (touchesPerson || touchesRemovedUnion) {
-          filiations.splice(idx, 1)
-        }
-      }
-
-      for (let idx = medias.length - 1; idx >= 0; idx -= 1) {
-        if (String(medias[idx].personId) === String(personId)) {
-          medias.splice(idx, 1)
-        }
-      }
-
+      const target = persons.find((candidate) => String(candidate.id) === String(personId))
+      const name = target ? firstNameLabel(target) : ''
+      const snapshot = removePersonFromGraph(personId)
       tree.setSelectedPerson(null)
       tree.bumpGraphRevision()
-      return
-    }
+      if (!snapshot) return
 
-    if (tree.canEditCurrentTree) {
-      const accessToken = tree.treeContext.accessToken || auth.userAuth.token
-      if (!accessToken) return
-
-      await deletePerson(tree.treeContext.treeId, personId, accessToken)
-      await refreshTreeAndKeepSelection(null, { relayout: true })
-      tree.setSelectedPerson(null)
+      const treeId = ownTree ? tree.treeContext.treeId : null
+      undoable.start({
+        message: name ? t("{name} est supprimé·e de l'arbre.", { name }) : t("La personne est supprimée de l'arbre."),
+        reapply: () => Boolean(removePersonFromGraph(personId)),
+        commit: async ({ keepalive = false } = {}) => {
+          if (!treeId) return
+          try {
+            await deletePerson(treeId, personId, accessToken, { keepalive })
+            if (!keepalive) await refreshKeepingSelection({ relayout: true })
+          } catch {
+            if (keepalive) return
+            await refreshKeepingSelection({ relayout: true })
+            setDraftNotice(t("{name} n'a pas pu être supprimé·e. Réessayez.", { name }))
+          }
+        },
+        undo: async () => {
+          if (treeId) {
+            await refreshTreeAndKeepSelection(personId, { relayout: true })
+            return
+          }
+          replaceGraph(snapshot)
+          tree.bumpGraphRevision()
+          tree.setSelectedPerson(persons.find((candidate) => String(candidate.id) === String(personId)) || null)
+        },
+      })
       return
     }
 
@@ -1828,7 +2006,35 @@ function App() {
     editMode.updateDraft({ deletedPersons })
 
     tree.setSelectedPerson(null)
-  }, [auth.userAuth.token, refreshTreeAndKeepSelection, tree.canEditCurrentTree, tree.treeContext.accessToken, tree.treeContext.treeId, isDemoMode]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [auth.userAuth.token, undoable.start, tree.canEditCurrentTree, tree.treeContext.accessToken, tree.treeContext.treeId, isDemoMode]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleMediaDelete = useCallback((mediaId) => {
+    const personId = tree.selectedPerson?.id
+    const { treeId, accessToken } = tree.treeContext
+    if (!tree.canEditCurrentTree || !personId || !treeId || !accessToken) return
+    const removeMedia = () => {
+      if (!medias.some((candidate) => String(candidate.id) === String(mediaId))) return false
+      replaceGraph({ medias: medias.filter((candidate) => String(candidate.id) !== String(mediaId)) })
+      return true
+    }
+    if (!removeMedia()) return
+    tree.bumpGraphRevision()
+    undoable.start({
+      message: t('Le souvenir est supprimé.'),
+      reapply: removeMedia,
+      commit: async ({ keepalive = false } = {}) => {
+        try {
+          await deletePersonMedia(treeId, personId, mediaId, accessToken, { keepalive })
+          if (!keepalive) await refreshKeepingSelection({ relayout: false })
+        } catch {
+          if (keepalive) return
+          await refreshKeepingSelection({ relayout: false })
+          setDraftNotice(t('La suppression n’a pas abouti. Réessayez dans un instant.'))
+        }
+      },
+      undo: () => refreshKeepingSelection({ relayout: false }),
+    })
+  }, [tree.selectedPerson, tree.canEditCurrentTree, tree.treeContext, undoable.start, refreshKeepingSelection]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Ajout d'une relation (mode édition)
   const handleAddRelation = useCallback(async (sourcePersonId, targetPersonId, relationType) => {
@@ -2530,7 +2736,7 @@ function App() {
   }
 
   const handleRegister = async (firstName, email, password, registrationCode) => {
-    const success = await auth.handleRegister(firstName, email, password, registrationCode)
+    const success = await auth.handleRegister(firstName, email, password, undefined, registrationCode)
     if (!success) {
       return
     }
@@ -2963,6 +3169,25 @@ function App() {
   }
 
 
+  if (INVITATION_TOKEN) {
+    return (
+      <div className="app">
+        <InvitationScreen
+          invitationToken={INVITATION_TOKEN}
+          userToken={auth.userAuth.token || ''}
+          userEmail={auth.userAuth.user?.email || ''}
+          loading={auth.accountLoading}
+          errorMessage={auth.accountError}
+          onLogin={auth.handleLogin}
+          onRegister={auth.handleRegister}
+          onOidcLogin={authOptions.oidc ? () => window.location.assign(oidcStartUrl(`/invitation/${INVITATION_TOKEN}`)) : undefined}
+          onLogout={handleLogout}
+          onOpenApp={() => window.location.assign('/')}
+        />
+      </div>
+    )
+  }
+
   if (tree.bootState === 'loading') {
     return (
       <div className="app app-loading" />
@@ -3021,6 +3246,15 @@ function App() {
           oidcName={authOptions.oidc?.name || ''}
           onOidcLogin={authOptions.oidc ? () => window.location.assign(oidcStartUrl(getSlugFromPathname() ? window.location.pathname : '/')) : undefined}
           hasPassword={auth.userAuth.user?.hasPassword !== false}
+          oidcLinked={auth.userAuth.user?.oidcLinked === true}
+          onLinkOidc={authOptions.oidc && auth.userAuth.user?.oidcLinked === false ? async () => {
+            // Relier le fournisseur au compte : le serveur donne un ticket court, le départ OIDC le porte
+            try {
+              window.location.assign(oidcLinkUrl(await requestOidcLinkTicket(auth.userAuth.token)))
+            } catch (error) {
+              auth.setAccountError(getAccountErrorMessage(error))
+            }
+          } : undefined}
           pendingTreeName={pendingSharedTreeName}
           onLogin={handleLogin}
           onRegister={handleRegister}
@@ -3130,6 +3364,12 @@ function App() {
         error={addPersonError}
         onSubmit={handleAddPersonSubmit}
         onClose={handleCloseAddPerson}
+        prefill={addPersonPrefill}
+        onOpenPerson={(person) => {
+          trackAppEvent('duplicate_opened', { tree_id: opaqueTreeId })
+          setAddPersonPanelVisible(false)
+          handlePersonSelect(person)
+        }}
       />
       {/* Modal Session Contribution (contributeurs) */}
       <ContributionSessionModal
@@ -3164,12 +3404,18 @@ function App() {
         onAddPerson={handleSouvenirPickerAddPerson}
         onClose={() => setSouvenirPickerVisible(false)}
       />
-      {draftNotice && !contribSuccess && !showContribModal && (
+      {undoable.message && (
+        <div className="contrib-success-toast undo-toast" role="status">
+          <span>{undoable.message}</span>
+          <button type="button" className="undo-toast-btn" onClick={undoable.undo} title={t('Annuler (Ctrl+Z)')}>{t('Annuler')}</button>
+        </div>
+      )}
+      {draftNotice && !undoable.message && !contribSuccess && !showContribModal && (
         <div className="contrib-success-toast" role="status">{draftNotice}</div>
       )}
       {contribSuccess && (
         <div className="contrib-success-toast" role="status">
-          {t("Merci, c'est envoyé ! Ça apparaîtra dans l'arbre une fois relu.")}
+          {t("Merci, c'est envoyé ! C'est en pointillés sur l'arbre jusqu'à la relecture.")}
         </div>
       )}
       {/* Navbar contextuelle */}
@@ -3227,11 +3473,23 @@ function App() {
         annotationViewRef={annotationViewRef}
         onAnnotationsAnchored={persistAnnotationAnchors}
         selfPersonId={linkedSelfPersonId || null}
+        ghosts={ghosts}
+        initialFamilyKey={initialFamilyKey}
+        onFamilyChange={handleFamilyChange}
       />
       <ZoomControl zoomApiRef={galaxyZoomApiRef} />
+      {selectedGhost && !tree.selectedPerson && (
+        <ProposalCard
+          person={selectedGhost}
+          summary={selectedGhost.ghost?.summary || ''}
+          review={userRole.isAdmin && selectedGhost.ghost?.source === 'pending' ? reviewFromTree(selectedGhost.ghost.sessionId) : null}
+          onClose={() => setSelectedGhost(null)}
+        />
+      )}
       {tree.selectedPerson && (
         <PersonCard
           person={tree.selectedPerson}
+          onUndoable={undoable.start}
           onClose={() => chooseSelectedPerson(null)}
           onMediaSelect={handleMediaSelectFresh}
           saveOnLeaveRef={personSaveOnLeaveRef}
@@ -3253,6 +3511,11 @@ function App() {
           onRemoveRelation={handleRemoveRelation}
           onSetParentage={handleSetParentage}
           pendingParentage={pendingParentage[String(tree.selectedPerson.id)] ?? null}
+          onCreateRelative={tree.canEditCurrentTree || tree.canSubmitContribution || isDemoMode ? handleCreateRelative : null}
+          proposal={ghosts?.patches.get(String(tree.selectedPerson.id)) || null}
+          proposalReview={userRole.isAdmin && ghosts?.patches.get(String(tree.selectedPerson.id))?.ghost?.source === 'pending'
+            ? reviewFromTree(ghosts.patches.get(String(tree.selectedPerson.id)).ghost.sessionId)
+            : null}
           relationActionLoading={relationFeedback.loading}
           relationActionSuccess={relationFeedback.success}
           relationActionError={relationFeedback.error}
@@ -3260,6 +3523,7 @@ function App() {
           onMoveSibling={(delta) => galaxyZoomApiRef.current?.moveSibling?.(tree.selectedPerson.id, delta)}
           onUploadMomentFile={tree.canEditCurrentTree || tree.canSubmitContribution ? media.uploadMomentFile : undefined}
           onMomentSaved={media.refreshMomentMedia}
+          onQuickEdit={tree.canEditCurrentTree && userRole.isAdmin && !isDemoMode ? handleEditToggle : undefined}
         />
       )}
       {/* Crayon de modification masqué en démo : rien n'y est enregistré */}
@@ -3311,7 +3575,7 @@ function App() {
         onClose={media.handleCloseMediaManager}
         onUpload={media.handleUploadPersonMedia}
         onMove={media.handleMovePersonMedia}
-        onDelete={media.handleDeletePersonMedia}
+        onDelete={handleMediaDelete}
       />
       <ContributionPanel
         visible={contrib.contribState.visible}
@@ -3319,7 +3583,8 @@ function App() {
         canModerate={tree.canEditCurrentTree}
         loading={contrib.contribState.loading}
         errorMessage={contrib.contribState.error}
-        inviteShareUrl={contribInviteState.shareUrl}
+        inviteShareUrl={contribInviteState.shareUrl && openFamily ? `${contribInviteState.shareUrl}?famille=${encodeURIComponent(openFamily.key)}` : contribInviteState.shareUrl}
+        inviteFamilyName={openFamily?.label || ''}
         inviteKnownPasswords={contribInviteState.knownPasswords}
         inviteSaving={contribInviteState.loading}
         inviteError={contribInviteState.error}
@@ -3348,7 +3613,13 @@ function App() {
         treeId={tree.treeContext.treeId}
         authToken={tree.treeContext.accessToken}
         isAdmin={userRole.isAdmin}
+        isOwner={userRole.isOwner}
+        currentUserId={auth.userAuth.user?.id || null}
+        oidcName={authOptions.oidc?.name || ''}
         onTreeDeleted={handleTreeDeleted}
+        onLeftTree={handleTreeDeleted}
+        onOpenShare={() => { setAdminPanelVisible(false); handleOpenContributionPanel() }}
+        onTreeUpdated={() => { if (auth.userAuth.token) auth.loadAccountTrees(auth.userAuth.token).catch(() => {}) }}
         onGedcomImported={handleGedcomImported}
         onOpenPhotoStart={() => { setAdminPanelVisible(false); openPhotoStart() }}
         onClose={() => setAdminPanelVisible(false)}

@@ -5,6 +5,7 @@ import {
   canStartSheetDrag,
   shouldCloseSheet,
   sheetDragIntent,
+  sheetOffset,
   velocityBetween,
 } from '../utils/sheetDrag'
 
@@ -35,10 +36,11 @@ export function useSheetMode() {
 /**
  * Glisser pour fermer une feuille du bas.
  * - Le geste ne part que des éléments de `zone` (sélecteur CSS) et jamais d'un champ de saisie ni d'une sélection de texte.
- * - La feuille suit le doigt (transform inline) et ne monte jamais au-delà de sa position de repos.
+ * - La feuille suit le doigt (transform inline) ; au-dessus de sa position de repos elle résiste (`sheetOffset`) et revient au lâcher.
  * - Au lâcher : `closes` décide (par défaut, un tiers de la hauteur ou un lâcher rapide). Fermer attend la fin de la sortie,
  *   puis appelle `onClose`. Si `onClose` renvoie `false` (enregistrement refusé), la feuille revient.
  * - Après un vrai glisser, le clic qui suit est avalé (pas de bouton déclenché au lâcher).
+ * - `canStart` (facultatif) peut refuser le geste au moment de l'appui (feuille qui a défilé, par exemple).
  *
  * Usage : `<div {...drag.bind} style={drag.style} data-dragging={drag.dragging || undefined}>`
  */
@@ -48,6 +50,7 @@ export function useSheetDrag({
   onClose,
   closes = shouldCloseSheet,
   closeDelayMs = 180,
+  canStart = null,
 }) {
   const [offset, setOffset] = useState(0)
   const [dragging, setDragging] = useState(false)
@@ -76,6 +79,7 @@ export function useSheetDrag({
     if (!enabled || closingRef.current || event.button > 0) return
     const selection = typeof window !== 'undefined' ? window.getSelection?.()?.toString() ?? '' : ''
     if (!canStartSheetDrag(event.target, zone, selection)) return
+    if (canStart && !canStart(event)) return
     gesture.current = {
       id: event.pointerId,
       x: event.clientX,
@@ -107,7 +111,7 @@ export function useSheetDrag({
     }
     g.prev = g.last
     g.last = { y: event.clientY, t: event.timeStamp }
-    setOffset(Math.max(0, dy))
+    setOffset(sheetOffset(dy))
   }
 
   const onPointerUp = (event) => {
@@ -142,6 +146,6 @@ export function useSheetDrag({
   return {
     dragging,
     bind: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onClickCapture },
-    style: offset > 0 ? { transform: `translateY(${offset}px)` } : undefined,
+    style: offset !== 0 ? { transform: `translateY(${offset}px)` } : undefined,
   }
 }

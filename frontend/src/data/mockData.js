@@ -127,6 +127,8 @@ function mapRemotePersonToLocal(person, current = null) {
     photo: current?.photo || null,
     avatarFromImmich: person?.avatarFromImmich ?? false,
     avatarCrop: person ? (person.avatarCrop ?? null) : (current?.avatarCrop ?? null),
+    // Aperçu flou du portrait pendant son chargement (utils/blurhash.js)
+    avatarBlurhash: person ? (person.avatarBlurhash ?? null) : (current?.avatarBlurhash ?? null),
   }
 }
 
@@ -152,6 +154,15 @@ const DEMO_LIFE = {
 
 export function getDemoLife(personId) {
   return DEMO_LIFE[personId] || null
+}
+
+// Remplace des tableaux du graphe. Ne jamais les muter en place (push, splice) : les index par personne
+// ci-dessous ne se reconstruisent que quand le tableau change d'identité
+export function replaceGraph(next) {
+  if (next.persons) persons = next.persons
+  if (next.unions) unions = next.unions
+  if (next.filiations) filiations = next.filiations
+  if (next.medias) medias = next.medias
 }
 
 export function resetToDemoData() {
@@ -255,6 +266,7 @@ export function loadGraphData(graph, options = {}) {
         displayOrder: Number.isFinite(media.displayOrder) ? media.displayOrder : index + 1,
         isFeatured: Boolean(media.isFeatured),
         mimeType: media.mimeType || null,
+        blurhash: media.blurhash || null,
         // Personnes identifiées sur le souvenir, point facultatif sur le visage (0 à 1)
         people: (Array.isArray(media.people) ? media.people : [])
           .filter((tag) => personIdSet.has(tag.personId))

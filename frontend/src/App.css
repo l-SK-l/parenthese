@@ -1,6 +1,8 @@
 .app {
   width: 100vw;
   height: 100vh;
+  /* La hauteur visible réelle (barres de Safari comprises) là où le navigateur la connaît */
+  height: 100dvh;
   position: relative;
   overflow: hidden;
   background: #FBFAF7;
@@ -510,13 +512,6 @@
 /* Groupement par type d'entité */
 
 /* Confirmation "Tout approuver" inline */
-
-/* Toast succès contribution envoyée */
-
-@keyframes toastIn {
-  from { opacity: 0; transform: translateX(-50%) translateY(12px); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-}
 
 @media (max-width: 700px) {
 

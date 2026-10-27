@@ -6,6 +6,8 @@ import PzBusy from './PzBusy.jsx'
 import { t } from '../i18n/index.js'
 import { firstNameLabel } from '../utils/personName.js'
 import { SEX_CHOICES } from '../utils/personSex.js'
+import { initialOf } from '../utils/initial.js'
+import { findLikelyDuplicates } from '../utils/duplicates.js'
 
 // Titre traduit d'un bloc : le passage entre <em> et </em> garde son italique
 function withEmphasis(text) {
@@ -32,7 +34,11 @@ function withEmphasis(text) {
  * @param {Function} props.onSubmit - Handler soumission (formData)
  * @param {Function} props.onClose - Handler fermeture
  */
-function AddPersonPanel({ visible, persons = [], loading = false, error = '', onSubmit, onClose }) {
+/**
+ * @param {Object} props.prefill - ouverture depuis une fiche (1.5.1) : { nonce, firstName, lastName, relation: { type, personId, personName } }
+ * @param {Function} props.onOpenPerson - « Ouvrir sa fiche » sous l'alerte de doublon
+ */
+function AddPersonPanel({ visible, persons = [], loading = false, error = '', onSubmit, onClose, prefill = null, onOpenPerson = null }) {
   const [firstName, setFirstName] = useState('')
   // Prénom inconnu : enregistré vide, affiché « Prénom inconnu » dans l'arbre et la fiche
   const [unknownFirstName, setUnknownFirstName] = useState(false)
@@ -59,6 +65,23 @@ function AddPersonPanel({ visible, persons = [], loading = false, error = '', on
 
   const firstNameRef = useRef(null)
   const panelRef = useRef(null)
+
+  // Ouvert depuis une fiche : le lien avec la personne est déjà là, et le nom de famille proposé pour un enfant
+  // ou un frère ou une sœur (modifiable). Avant, il fallait rechercher à nouveau la personne qu'on venait de quitter.
+  useEffect(() => {
+    if (!prefill?.nonce) return
+    setFirstName(prefill.firstName || '')
+    setUnknownFirstName(false)
+    setLastName(prefill.lastName || '')
+    setTouched({})
+    if (prefill.relation?.personId != null) {
+      setSelectedRelationType(prefill.relation.type)
+      setRelations([{ personId: prefill.relation.personId, personName: prefill.relation.personName || '', type: prefill.relation.type }])
+    }
+  }, [prefill?.nonce]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Doublon probable : même prénom et même nom qu'une personne de l'arbre
+  const duplicates = unknownFirstName ? [] : findLikelyDuplicates(persons, firstName, lastName)
 
   // Focus sur Prénom à l'ouverture
   useEffect(() => {
@@ -250,6 +273,21 @@ function AddPersonPanel({ visible, persons = [], loading = false, error = '', on
             <p className="apn-error-text">{t('Il faut au moins un prénom.')}</p>
           )}
           {lastNameMissing && <p className="apn-error-text">{t('Il faut au moins un nom si le prénom est inconnu.')}</p>}
+          {duplicates.length > 0 && (
+            <div className="apn-duplicate" role="status">
+              {duplicates.map((p) => (
+                <p key={p.id} className="apn-duplicate-line">
+                  <span>{p.birthYear
+                    ? t('{name} ({year}) est déjà dans l’arbre.', { name: `${firstNameLabel(p)} ${p.lastName || ''}`.trim(), year: p.birthYear })
+                    : t('{name} est déjà dans l’arbre.', { name: `${firstNameLabel(p)} ${p.lastName || ''}`.trim() })}</span>
+                  {onOpenPerson && (
+                    <button type="button" className="pz-btn pz-btn--ghost pz-btn--sm" onClick={() => onOpenPerson(p)}>{t('Ouvrir sa fiche')}</button>
+                  )}
+                </p>
+              ))}
+              <p className="apn-duplicate-hint">{t('Si c’est une autre personne, ajoutez-la quand même.')}</p>
+            </div>
+          )}
 
           <div className="pz-field">
             <label htmlFor="ap-birthName">{t('Nom de naissance')} <span className="apn-optional">{t('si différent')}</span></label>
@@ -354,7 +392,7 @@ function AddPersonPanel({ visible, persons = [], loading = false, error = '', on
                     <li key={p.id}>
                       <button type="button" className="apn-dropdown-item" onClick={() => handleAddRelation(p)}>
                         <span className="apn-avatar" aria-hidden="true">
-                          {p.photo ? <img src={p.photo} alt="" /> : (p.firstName || '').trim().charAt(0) || '?'}
+                          {p.photo ? <img src={p.photo} alt="" /> : initialOf(p.firstName)}
                         </span>
                         <span className="apn-dropdown-name">{firstNameLabel(p)} <em>{p.lastName || ''}</em></span>
                         {(p.birthYear || p.birthDate) && (

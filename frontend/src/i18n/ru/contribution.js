@@ -11,6 +11,10 @@ const unanswered = {
 const minutesAgo = { one: '{n} минуту назад', few: '{n} минуты назад', many: '{n} минут назад' }
 const hoursAgo = { one: '{n} час назад', few: '{n} часа назад', many: '{n} часов назад' }
 const daysAgo = { one: '{n} день назад', few: '{n} дня назад', many: '{n} дней назад' }
+const editedProfiles = { one: '{n} карточка изменена', few: '{n} карточки изменены', many: '{n} карточек изменено' }
+const links = { one: '{n} связь', few: '{n} связи', many: '{n} связей' }
+const treeAdditions = { one: '{n} добавление на древе', few: '{n} добавления на древе', many: '{n} добавлений на древе' }
+const otherChanges = { one: '{n} другое изменение', few: '{n} других изменения', many: '{n} других изменений' }
 
 export default {
   // ─── Actions and types (ContributionPanel, ContributionSessionModal) ───
@@ -210,4 +214,39 @@ export default {
   'Vous proposez des changements': 'Вы предлагаете изменения',
   'Vous proposez': 'Вы предлагаете',
   'Proposer des changements': 'Предложить изменения',
+  // 1.5: proposal cards on the tree, summaries, upload errors
+  "Le lien à envoyer à la famille {name}": "Ссылка для семьи {name}",
+  "La fiche a changé depuis cette proposition": "Карточка изменилась после этого предложения",
+  "{action}, à vérifier": "{action}, нужно проверить",
+  "Brouillon": "Черновик",
+  "En attente": "Ожидает",
+  "Proposé": "Предложено",
+  "Proposition": "Предложение",
+  "oui": "да",
+  "non": "нет",
+  "Pas encore envoyé : il part avec « Envoyer »": "Ещё не отправлено: уйдёт по кнопке «Отправить»",
+  "Envoyé, en attente de relecture par la personne qui gère l’arbre": "Отправлено, ждёт проверки тем, кто ведёт древо",
+  "Proposé par {name}, le {date}": "Предложение от {name}, {date}",
+  "Proposé par {name}": "Предложение от {name}",
+  "Proposé par la famille": "Предложение от родных",
+  "Relecture en cours": "Проверяем",
+  "Voir le détail": "Подробнее",
+  "Proposition : {name}": "Предложение: {name}",
+  "Dans cette proposition : {summary}.": "В этом предложении: {summary}.",
+  "Modification proposée": "Предложенное изменение",
+  "Supprimer cette personne de l’arbre": "Удалить этого человека из древа",
+  "{n} fiche modifiée": editedProfiles,
+  "{n} fiches modifiées": editedProfiles,
+  "{n} lien": links,
+  "{n} liens": links,
+  "{n} ajout sur l'arbre": treeAdditions,
+  "{n} ajouts sur l'arbre": treeAdditions,
+  "{n} autre changement": otherChanges,
+  "{n} autres changements": otherChanges,
+  "La photo n'a pas pu être envoyée. Réessayez.": "Не удалось отправить фото. Попробуйте ещё раз.",
+  "Une partie n'a pas été enregistrée ({error}). Elle reste dans vos modifications : réessayez.": "Часть не сохранилась ({error}). Она осталась в ваших правках: попробуйте ещё раз.",
+  "Cette photo est trop lourde. Essayez une photo plus petite.": "Фото слишком большое. Попробуйте фото поменьше.",
+  "Beaucoup de photos attendent déjà la relecture sur cet arbre. Réessayez quand la personne qui le gère les aura vues.": "В этом древе уже много фото ждут проверки. Попробуйте снова, когда тот, кто ведёт древо, их просмотрит.",
+  "Ce fichier n’est pas une photo que Parenthèse sait afficher (JPEG, PNG, WebP ou GIF).": "Parenthèse не умеет показывать такой файл как фото (нужен JPEG, PNG, WebP или GIF).",
+  "Cette proposition a déjà été relue, peut-être par une autre personne qui gère l’arbre.": "Это предложение уже проверено — возможно, другим человеком, который ведёт древо.",
 }

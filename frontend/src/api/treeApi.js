@@ -71,6 +71,7 @@ export async function fetchPersonLife(treeId, personId, token) {
 export async function createLifeEvent(treeId, personId, payload, token) {
   return apiRequest(`/trees/${encodeURIComponent(treeId)}/persons/${encodeURIComponent(personId)}/life/events`, {
     method: 'POST',
+    idempotent: true,
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(payload),
   })
@@ -84,9 +85,10 @@ export async function updateLifeEvent(treeId, eventId, payload, token) {
   })
 }
 
-export async function deleteLifeEvent(treeId, eventId, token) {
+export async function deleteLifeEvent(treeId, eventId, token, { keepalive = false } = {}) {
   return apiRequest(`/trees/${encodeURIComponent(treeId)}/life/events/${encodeURIComponent(eventId)}`, {
     method: 'DELETE',
+    keepalive,
     headers: { Authorization: `Bearer ${token}` },
   })
 }
@@ -178,9 +180,10 @@ export async function updatePerson(treeId, personId, payload, token) {
   return data.person
 }
 
-export async function deletePerson(treeId, personId, token) {
+export async function deletePerson(treeId, personId, token, { keepalive = false } = {}) {
   const data = await apiRequest(`/trees/${encodeURIComponent(treeId)}/persons/${encodeURIComponent(personId)}`, {
     method: 'DELETE',
+    keepalive,
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -371,6 +374,7 @@ export async function listTreeVisits(treeId, token) {
 export async function submitContributionSession(treeId, payload, token) {
   const data = await apiRequest(`/trees/${encodeURIComponent(treeId)}/contributions/sessions`, {
     method: 'POST',
+    idempotent: true,
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -404,9 +408,22 @@ export async function reviewContributionSession(treeId, sessionId, payload, toke
   return data
 }
 
+// État d'une proposition envoyée (en attente, acceptée, refusée) : la famille retire ses fantômes une fois relue
+export async function fetchContributionStatus(treeId, sessionId, token) {
+  const data = await apiRequest(`/trees/${encodeURIComponent(treeId)}/contributions/sessions/${encodeURIComponent(sessionId)}/status`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+  return data?.status || null
+}
+
 export async function uploadAnnotationPhoto(treeId, payload, token) {
   const data = await apiRequest(`/trees/${encodeURIComponent(treeId)}/annotation-photos`, {
     method: 'POST',
+    idempotent: true,
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -419,6 +436,7 @@ export async function uploadAnnotationPhoto(treeId, payload, token) {
 export async function uploadPersonMedia(treeId, personId, payload, token) {
   const data = await apiRequest(`/trees/${encodeURIComponent(treeId)}/persons/${encodeURIComponent(personId)}/media`, {
     method: 'POST',
+    idempotent: true,
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -440,11 +458,12 @@ export async function reorderPersonMedia(treeId, personId, orderedMediaIds, toke
   return data
 }
 
-export async function deletePersonMedia(treeId, personId, mediaId, token) {
+export async function deletePersonMedia(treeId, personId, mediaId, token, { keepalive = false } = {}) {
   const data = await apiRequest(
     `/trees/${encodeURIComponent(treeId)}/persons/${encodeURIComponent(personId)}/media/${encodeURIComponent(mediaId)}`,
     {
       method: 'DELETE',
+      keepalive,
       headers: {
         Authorization: `Bearer ${token}`,
       },

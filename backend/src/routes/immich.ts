@@ -1,5 +1,5 @@
-import { Prisma } from '@prisma/client'
-import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
+import { Prisma } from '../generated/prisma/client.js'
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -16,9 +16,10 @@ import {
   ImmichUnavailableError,
   type ImmichPersonSummary,
 } from '../lib/immich.js'
+import { computeBlurhash } from '../lib/blurhash.js'
 import { decryptImmichApiKey, encryptImmichApiKey } from '../lib/immich-secret.js'
 import { IMAGE_MIME_TYPES, InvalidMediaError, isImmichAvatarPath, removeStoredFile, sniffMimeType } from '../lib/media-files.js'
-import { exceedsStorageQuota, getStorageRoot, prepareUploadedFile, requireAdminMembership } from './media.js'
+import { exceedsStorageQuota, getStorageRoot, prepareUploadedFile } from './media.js'
 
 // Reconnaissance des visages : associer une personne de l'arbre à une personne Immich, dont la
 // vignette devient son portrait. Chaque arbre porte sa propre connexion Immich : une adresse
@@ -97,6 +98,21 @@ function buildAvatarRelativePath(treeId: string, personId: string, extension: st
   return path.posix.join(treeId, personId, `immich-${randomUUID()}${extension}`)
 }
 
+
+async function membershipRole(app: FastifyInstance, userId: string, treeId: string) {
+  const membership = await app.prisma.treeMembership.findUnique({
+    where: { treeId_userId: { treeId, userId } },
+    select: { role: true, tree: { select: { deletedAt: true } } },
+  })
+  return membership && !membership.tree.deletedAt ? membership.role : null
+}
+
+// Immich passe par la clé du propriétaire, qui ouvre toute sa photothèque, pas seulement les photos de l'arbre :
+// réservé au propriétaire, jamais aux co-gestionnaires (issue #145)
+async function requireImmichOwner(app: FastifyInstance, userId: string, treeId: string): Promise<boolean> {
+  return (await membershipRole(app, userId, treeId)) === 'owner'
+}
+
 export const immichRoutes: FastifyPluginAsync = async (app) => {
   // Lecture réservée aux administrateurs : la clé donne accès à la photothèque de l'arbre.
   // Les fichiers sélectionnés passent ensuite par l'envoi de souvenirs habituel (quota,
@@ -111,7 +127,7 @@ export const immichRoutes: FastifyPluginAsync = async (app) => {
       personId: z.string().refine(isImmichPersonId).optional(),
     }).safeParse(request.query)
     if (!params.success || !query.success) return reply.code(400).send({ error: 'invalid_params' })
-    if (!(await requireAdminMembership(app, request.actor.userId, params.data.id))) return reply.code(403).send({ error: 'forbidden' })
+    if (!(await requireImmichOwner(app, request.actor.userId, params.data.id))) return reply.code(403).send({ error: 'forbidden' })
     const client = await getTreeImmichClient(app.prisma, params.data.id)
     if (!client) return reply.code(503).send({ error: 'immich_not_configured' })
     try {
@@ -124,7 +140,7 @@ export const immichRoutes: FastifyPluginAsync = async (app) => {
     if (request.actor?.kind !== 'user') return reply.code(401).send({ error: 'authentication_required' })
     const params = z.object({ id: z.string().min(1), assetId: z.string().refine(isImmichPersonId), variant: z.enum(['thumbnail', 'preview', 'original']) }).safeParse(request.params)
     if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
-    if (!(await requireAdminMembership(app, request.actor.userId, params.data.id))) return reply.code(403).send({ error: 'forbidden' })
+    if (!(await requireImmichOwner(app, request.actor.userId, params.data.id))) return reply.code(403).send({ error: 'forbidden' })
     const client = await getTreeImmichClient(app.prisma, params.data.id)
     if (!client) return reply.code(503).send({ error: 'immich_not_configured' })
     try {
@@ -154,8 +170,14 @@ export const immichRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_params' })
     }
 
-    if (!(await requireAdminMembership(app, request.actor.userId, params.data.id))) {
+    const role = await membershipRole(app, request.actor.userId, params.data.id)
+    if (role !== 'owner' && role !== 'admin') {
       return reply.code(403).send({ error: 'forbidden' })
+    }
+    // Co-gestionnaire : la clé Immich est celle du propriétaire et ouvre toute sa photothèque. Il ne voit ni ne
+    // règle rien ; pour l'interface, Immich n'est pas configuré
+    if (role !== 'owner') {
+      return reply.send({ config: null, instances: [], ownerOnly: true })
     }
 
     const config = await app.prisma.treeImmichConfig.findUnique({
@@ -184,7 +206,7 @@ export const immichRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_payload', details: payload.error.flatten() })
     }
 
-    if (!(await requireAdminMembership(app, request.actor.userId, params.data.id))) {
+    if (!(await requireImmichOwner(app, request.actor.userId, params.data.id))) {
       return reply.code(403).send({ error: 'forbidden' })
     }
 
@@ -253,7 +275,7 @@ export const immichRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_params' })
     }
 
-    if (!(await requireAdminMembership(app, request.actor.userId, params.data.id))) {
+    if (!(await requireImmichOwner(app, request.actor.userId, params.data.id))) {
       return reply.code(403).send({ error: 'forbidden' })
     }
 
@@ -287,7 +309,7 @@ export const immichRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_params' })
     }
 
-    if (!(await requireAdminMembership(app, request.actor.userId, params.data.id))) {
+    if (!(await requireImmichOwner(app, request.actor.userId, params.data.id))) {
       return reply.code(403).send({ error: 'forbidden' })
     }
 
@@ -310,7 +332,7 @@ export const immichRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_params' })
     }
 
-    if (!(await requireAdminMembership(app, request.actor.userId, params.data.id))) {
+    if (!(await requireImmichOwner(app, request.actor.userId, params.data.id))) {
       return reply.code(403).send({ error: 'forbidden' })
     }
 
@@ -339,7 +361,7 @@ export const immichRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_immich_person_id' })
     }
 
-    if (!(await requireAdminMembership(app, request.actor.userId, params.data.id))) {
+    if (!(await requireImmichOwner(app, request.actor.userId, params.data.id))) {
       return reply.code(403).send({ error: 'forbidden' })
     }
 
@@ -381,7 +403,7 @@ export const immichRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_params' })
     }
 
-    if (!(await requireAdminMembership(app, request.actor.userId, params.data.id))) {
+    if (!(await requireImmichOwner(app, request.actor.userId, params.data.id))) {
       return reply.code(403).send({ error: 'forbidden' })
     }
 
@@ -407,7 +429,7 @@ export const immichRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: payload.success ? 'invalid_params' : 'invalid_immich_person_id' })
     }
 
-    if (!(await requireAdminMembership(app, request.actor.userId, params.data.id))) {
+    if (!(await requireImmichOwner(app, request.actor.userId, params.data.id))) {
       return reply.code(403).send({ error: 'forbidden' })
     }
 
@@ -518,6 +540,7 @@ export const immichRoutes: FastifyPluginAsync = async (app) => {
             avatarMimeType: prepared.mimeType,
             // Nouveau portrait, nouveau cadrage à faire
             avatarCrop: Prisma.DbNull,
+            avatarBlurhash: await computeBlurhash(prepared.buffer) ?? '',
             immichPersonId,
             updatedBy: request.actor.userId,
           },
@@ -565,7 +588,7 @@ export const immichRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_params' })
     }
 
-    if (!(await requireAdminMembership(app, request.actor.userId, params.data.id))) {
+    if (!(await requireImmichOwner(app, request.actor.userId, params.data.id))) {
       return reply.code(403).send({ error: 'forbidden' })
     }
 
@@ -598,11 +621,13 @@ export const immichRoutes: FastifyPluginAsync = async (app) => {
       avatarPath?: null
       avatarMimeType?: null
       avatarCrop?: typeof Prisma.DbNull
+      avatarBlurhash?: null
     } = { immichPersonId: null, updatedBy: request.actor.userId }
     if (avatarFromImmich) {
       updateData.avatarPath = null
       updateData.avatarMimeType = null
       updateData.avatarCrop = Prisma.DbNull
+      updateData.avatarBlurhash = null
     }
 
     // Base d'abord, fichier ensuite : le portrait disparaît seulement une fois la base à jour.

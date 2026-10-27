@@ -4,6 +4,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 // Prénom du compte : renvoyé à l'inscription, à la connexion et sur /me.
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
+    // Sessions fermées (lib/token-revocation.ts), rechargées au démarrage
+    revokedSession: {
+      upsert: vi.fn().mockResolvedValue({}),
+      findMany: vi.fn().mockResolvedValue([]),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
     user: {
       findUnique: vi.fn(),
       create: vi.fn(),
@@ -111,7 +117,7 @@ describe('prénom du compte', () => {
     prismaMock.user.findUnique.mockResolvedValue({ id: 'user-1', email: 'anais@example.com', firstName: 'Anaïs', passwordHash: 'hash' })
     const me = await app.inject({ method: 'GET', url: '/auth/me', headers: { authorization: `Bearer ${token}` } })
     expect(me.statusCode).toBe(200)
-    expect(me.json().user).toEqual({ id: 'user-1', email: 'anais@example.com', firstName: 'Anaïs', hasPassword: true })
+    expect(me.json().user).toEqual({ id: 'user-1', email: 'anais@example.com', firstName: 'Anaïs', hasPassword: true, oidcLinked: false })
 
     const anonymous = await app.inject({ method: 'GET', url: '/auth/me' })
     expect(anonymous.statusCode).toBe(401)

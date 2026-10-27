@@ -4,16 +4,19 @@ import cookie from '@fastify/cookie'
 import cors from '@fastify/cors'
 import jwt from '@fastify/jwt'
 import rateLimit from '@fastify/rate-limit'
-import { Prisma } from '@prisma/client'
+import { Prisma } from './generated/prisma/client.js'
 
 import { env } from './config/env.js'
 import { prisma } from './lib/prisma.js'
-import { isUserTokenRevoked } from './lib/token-revocation.js'
+import { isUserTokenRevoked, loadRevokedTokens } from './lib/token-revocation.js'
+import { registerIdempotency } from './lib/idempotency.js'
+import { startBlurhashFiller } from './lib/blurhash.js'
 import { authRoutes } from './routes/auth.js'
 import { contributionRoutes } from './routes/contributions.js'
 import { graphRoutes } from './routes/graph.js'
 import { immichRoutes } from './routes/immich.js'
-import { mediaRoutes } from './routes/media.js'
+import { managerRoutes } from './routes/managers.js'
+import { getStorageRoot, mediaRoutes } from './routes/media.js'
 import { oidcRoutes } from './routes/oidc.js'
 import { publicRoutes } from './routes/public.js'
 import { annotationRoutes } from './routes/annotations.js'
@@ -56,6 +59,14 @@ export function createApp() {
   })
 
   app.decorate('prisma', prisma)
+  // Les déconnexions d'avant le redémarrage reviennent en mémoire avant la première requête (onReady passe avant
+  // listen). Sans elles, l'API ne démarre pas : chaque session fermée redeviendrait valable sans que personne le
+  // voie, et pm2 comme Docker relancent l'API.
+  app.addHook('onReady', async () => {
+    await loadRevokedTokens(app.prisma)
+  })
+  // Aperçus flous des photos et portraits qui n'en ont pas encore (lib/blurhash.ts) ; pas pendant les tests
+  if (env.NODE_ENV !== 'test') app.addHook('onReady', async () => startBlurhashFiller(app, getStorageRoot()))
   app.decorateRequest('actor', null)
 
   app.register(cors, {
@@ -148,6 +159,9 @@ export function createApp() {
 
   app.get('/health', async () => ({ ok: true }))
 
+  // Après l'identification : une clé d'idempotence ne vaut que pour la personne qui l'a envoyée
+  registerIdempotency(app)
+
   app.register(authRoutes, { prefix: '/auth' })
   app.register(oidcRoutes, { prefix: '/auth/oidc' })
   app.register(publicRoutes)
@@ -159,6 +173,7 @@ export function createApp() {
   app.register(gedcomRoutes)
   app.register(visitRoutes)
   app.register(immichRoutes)
+  app.register(managerRoutes)
 
   app.setErrorHandler((error: FastifyError | Error, request, reply) => {
     if (error instanceof Prisma.PrismaClientInitializationError) {

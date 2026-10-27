@@ -255,4 +255,9 @@ export default {
   "Aide": "Помощь",
   "Se déconnecter": "Выйти",
   "Partager l'arbre": "Поделиться древом",
+  // Linking an OIDC provider to a password account
+  "Se connecter aussi avec {name}": "Входить также через {name}",
+  "Connexion avec {name} reliée à ce compte.": "Вход через {name} привязан к этому аккаунту.",
+  "Ce compte du fournisseur est déjà relié à un autre compte Parenthèse.": "Этот аккаунт провайдера уже привязан к другому аккаунту Parenthèse.",
+  "Le lien pour relier le compte a expiré. Recommencez depuis votre compte.": "Ссылка для привязки аккаунта устарела. Начните заново из своего аккаунта.",
 }

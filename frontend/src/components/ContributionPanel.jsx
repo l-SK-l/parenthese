@@ -9,6 +9,7 @@ import { HELP_URL } from '../utils/siteLinks.js'
 import { dateToInputText } from '../utils/dateInput.js'
 import { t, dateLocale } from '../i18n/index.js'
 import { sexLabel } from '../utils/personSex.js'
+import Skeleton from './Skeleton.jsx'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -243,6 +244,8 @@ const ContributionPanel = ({
   loading,
   errorMessage,
   inviteShareUrl,
+  // Onglet de famille ouvert : le lien ouvre l'arbre sur cette famille
+  inviteFamilyName = '',
   inviteKnownPasswords,
   inviteSaving,
   inviteError,
@@ -406,7 +409,7 @@ const ContributionPanel = ({
             {/* ── Section invitation ── */}
             <div className="contrib-invite">
               <div className="contrib-invite-top">
-                <strong className="contrib-invite-title">{t('Le lien à envoyer à la famille')}</strong>
+                <strong className="contrib-invite-title">{inviteFamilyName ? t('Le lien à envoyer à la famille {name}', { name: inviteFamilyName }) : t('Le lien à envoyer à la famille')}</strong>
                 {copyFeedback && <span className="contrib-copy-feedback">{copyFeedback}</span>}
               </div>
               <div className="contrib-invite-link">
@@ -472,7 +475,7 @@ const ContributionPanel = ({
             {errorMessage && <div className="contrib-error">{errorMessage}</div>}
 
             {loading ? (
-              <div className="contrib-empty">{t('Chargement…')}</div>
+              <Skeleton variant="rows" count={3} />
             ) : sessions.length === 0 ? (
               <div className="contrib-empty">{t("Rien à relire pour l'instant. Les propositions de la famille apparaîtront ici.")}</div>
             ) : (
@@ -561,16 +564,21 @@ const ContributionPanel = ({
                               key={change.id}
                               className={`contrib-change-card${isApproved ? ' contrib-change-card--approved' : ''}${isRejected ? ' contrib-change-card--rejected' : ''}`}
                             >
-                              <div className="contrib-change-card-head">
+                              {/* Étiquette posée sur le bord haut de la carte. Une fiche changée depuis la proposition dit « À vérifier »
+                                  à la place de « Modification » ; toute autre action garde son mot (une suppression reste lisible) */}
+                              {change.conflictState === 'needs_review' ? (
+                                <span className="contrib-action-badge contrib-action-badge--conflict" title={t('La fiche a changé depuis cette proposition')}>
+                                  {change.action === 'update' ? t('À vérifier') : t('{action}, à vérifier', { action: formatAction(change.action) })}
+                                </span>
+                              ) : (
                                 <span className={`contrib-action-badge contrib-action-badge--${change.action}`}>
                                   {formatAction(change.action)}
                                 </span>
+                              )}
+                              <div className="contrib-change-card-head">
                                 <span className="contrib-change-entity-name">
                                   {personName || formatEntityType(change.entityType)}
                                 </span>
-                                {change.conflictState === 'needs_review' && (
-                                  <span className="contrib-conflict-badge">{t('À vérifier')}</span>
-                                )}
                                 <div className="contrib-card-decisions">
                                   <button
                                     type="button"

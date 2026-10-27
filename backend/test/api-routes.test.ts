@@ -7,6 +7,12 @@ import { parseGedcom } from '../src/routes/gedcom'
 
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
+    // Sessions fermées (lib/token-revocation.ts), rechargées au démarrage
+    revokedSession: {
+      upsert: vi.fn().mockResolvedValue({}),
+      findMany: vi.fn().mockResolvedValue([]),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
     user: {
       findUnique: vi.fn(),
       count: vi.fn().mockResolvedValue(1),
@@ -18,6 +24,9 @@ const { prismaMock } = vi.hoisted(() => ({
       findUnique: vi.fn(),
       create: vi.fn(),
       updateMany: vi.fn(),
+    },
+    treeInvitation: {
+      findFirst: vi.fn().mockResolvedValue(null),
     },
     treeMembership: {
       count: vi.fn(async () => 0),
@@ -373,6 +382,24 @@ describe('Registration code', () => {
 
     expect(response.statusCode).toBe(201)
     expect(prismaMock.user.create).toHaveBeenCalledOnce()
+  })
+
+  it('lets an invitation link sign up without the code', async () => {
+    env.REGISTRATION_CODE = '1234'
+    // Valid when looked up by token; gone by the time it is accepted, so the account stays without a tree
+    prismaMock.treeInvitation.findFirst.mockResolvedValueOnce({ id: 'inv-1', email: 'new@example.com', tree: { id: 'tree-1' } })
+    const response = await register({ email: 'new@example.com', password: 'password123', invitationToken: 'token-1' })
+
+    expect(response.statusCode).toBe(201)
+    expect(prismaMock.user.create).toHaveBeenCalledOnce()
+  })
+
+  it('does not let a stale invitation link skip the code', async () => {
+    env.REGISTRATION_CODE = '1234'
+    const response = await register({ email: 'new@example.com', password: 'password123', invitationToken: 'stale' })
+
+    expect(response.statusCode).toBe(410)
+    expect(prismaMock.user.create).not.toHaveBeenCalled()
   })
 
   it('keeps sign-up open when no code is set', async () => {

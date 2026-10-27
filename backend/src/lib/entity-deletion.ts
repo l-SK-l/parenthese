@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '@prisma/client'
+import { Prisma, type PrismaClient } from '../generated/prisma/client.js'
 
 type Db = PrismaClient | Prisma.TransactionClient
 
@@ -32,7 +32,7 @@ export async function softDeletePersonCascade(
 
   await db.person.updateMany({
     where: { id: personId, treeId, deletedAt: null },
-    data: { deletedAt: now, updatedBy: actorUserId, avatarPath: null, avatarMimeType: null, avatarCrop: Prisma.DbNull, immichPersonId: null },
+    data: { deletedAt: now, updatedBy: actorUserId, avatarPath: null, avatarMimeType: null, avatarCrop: Prisma.DbNull, avatarBlurhash: null, immichPersonId: null },
   })
 
   const unions = await db.union.findMany({

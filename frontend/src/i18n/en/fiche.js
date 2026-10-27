@@ -1,6 +1,7 @@
 // Traductions anglaises, clé = texte français exact passé à t().
 export default {
   // Fiche d'une personne (PersonCard)
+  'Modifier': 'Edit',
   'Photo': 'Photo',
   'Vidéo': 'Video',
   'Audio': 'Audio',
@@ -91,7 +92,12 @@ export default {
   'Aucun enfant': 'No children',
   'Ajouter un enfant': 'Add a child',
   'Rechercher un enfant': 'Search for a child',
-  "Supprimer {name} de l'arbre ?": 'Delete {name} from the tree?',
+  "{name} est supprimé·e de l'arbre.": '{name} was deleted from the tree.',
+  "La personne est supprimée de l'arbre.": 'The person was deleted from the tree.',
+  "{name} n'a pas pu être supprimé·e. Réessayez.": '{name} could not be deleted. Try again.',
+  'Annuler (Ctrl+Z)': 'Undo (Ctrl+Z)',
+  'Le souvenir est supprimé.': 'The memory was deleted.',
+  'Le moment est supprimé.': 'The moment was deleted.',
   'Annuler': 'Cancel',
   'Supprimer': 'Delete',
   'Enregistré': 'Saved',
@@ -427,6 +433,7 @@ export default {
   'Naissance de {name}': 'Birth of {name}',
   'Décès à {place}': 'Died in {place}',
   'Ajouter un moment': 'Add a moment',
+  'Chargement de la frise': 'Loading the timeline',
   'Modifier « {title} »': 'Edit “{title}”',
   'Déménagement': 'Move',
   'L’enregistrement n’a pas abouti. Réessayez dans un instant.': 'Saving did not go through. Try again in a moment.',
@@ -468,7 +475,7 @@ export default {
   'Merci, c’est envoyé. Le moment apparaîtra dans sa vie quand la personne qui gère l’arbre l’aura accepté.': 'Thanks, it has been sent. The moment will show in their life once the person who manages the tree has accepted it.',
   // Dates : année seule, décès sans date (issue #77)
   'Année ou date': 'Year or date',
-  'Une année (1950) ou une date (12/03/1950)': 'A year (1950) or a date (12/03/1950)',
+  'Une année (1950) ou une date ({exemple})': 'A year (1950) or a date ({exemple})',
   'Date inconnue': 'Date unknown',
   'date inconnue': 'date unknown',
   'Décédé(e), date inconnue': 'Deceased, date unknown',
@@ -495,4 +502,20 @@ export default {
   'Chargement de la photo': 'Loading photo',
   'Impossible d’afficher cette photo.': 'Unable to display this photo.',
   'Les photos venues d’Immich ne se recadrent pas pour l’instant.': 'Photos from Immich cannot be cropped for now.',
+
+  // ─── Ajouter un proche depuis la fiche (1.5.1) ───
+  '{name} ({year}) est déjà dans l’arbre.': '{name} ({year}) is already in the tree.',
+  '{name} est déjà dans l’arbre.': '{name} is already in the tree.',
+  'Ouvrir sa fiche': 'Open their profile',
+  'Si c’est une autre personne, ajoutez-la quand même.': "If it's someone else, add them anyway.",
+  'comme parent': 'as a parent',
+  'comme enfant': 'as a child',
+  'comme conjoint·e': 'as a partner',
+  'Ajouter un proche': 'Add a relative',
+  'Frère ou sœur': 'Sibling',
+  'Frères et sœurs': 'Siblings',
+  'Aucun frère ni sœur': 'No siblings',
+  'Ajouter un frère ou une sœur': 'Add a sibling',
+  "Ajoutez d'abord un parent pour lui rattacher un frère ou une sœur.": 'Add a parent first to link a sibling.',
+  'Créer « {name} »': 'Create “{name}”',
 }

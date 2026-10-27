@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Pencil, UserPlus, X } from 'lucide-react'
 import { MediaPeopleList, MediaPeopleMarkers } from './MediaPeople.jsx'
 import {
@@ -13,6 +13,8 @@ import { t } from '../i18n/index.js'
 import { firstNameLabel } from '../utils/personName.js'
 import { eventTitle } from '../utils/lifeTimeline.js'
 import { getAccountErrorMessage } from '../utils/errorMessages.js'
+import { growFromTransform, takeOrigin } from '../utils/openOrigin.js'
+import { useSheetDrag, useSheetMode } from '../hooks/useSheetDrag.js'
 
 const HTTP_URL_RE = /^https?:\/\/\S+$/i
 const MAX_TITLE_LENGTH = 280
@@ -42,6 +44,10 @@ const MediaViewer = ({
   const [tagging, setTagging] = useState(false)
   const [draftPeople, setDraftPeople] = useState([])
   const [activeTagId, setActiveTagId] = useState(null)
+  // Visages identifiés : rien sur la photo par défaut (Patch, 27/10). Toucher la photo montre ou cache les prénoms,
+  // survoler un prénom sous la photo entoure son visage.
+  const [showNames, setShowNames] = useState(false)
+  const [hotPersonId, setHotPersonId] = useState(null)
   const [savingPeople, setSavingPeople] = useState(false)
   const [peopleError, setPeopleError] = useState('')
   const [peopleNotice, setPeopleNotice] = useState('')
@@ -309,12 +315,16 @@ const MediaViewer = ({
     // La boîte épouse l'image : les points (x, y en proportion) tombent pile sur les visages
     return (
       <div className="media-photo-frame">
-        <div className={`mv-photo-box${tagging ? ' is-tagging' : ''}${activeTagId ? ' is-placing' : ''}`} onClick={placeActiveTag}>
+        <div
+          className={`mv-photo-box${tagging ? ' is-tagging' : ''}${activeTagId ? ' is-placing' : ''}${showNames ? ' show-names' : ''}`}
+          onClick={(event) => (tagging ? placeActiveTag(event) : setShowNames((shown) => !shown))}
+        >
           <img src={mediaUrl} alt={media?.label || t('Photo')} />
           <MediaPeopleMarkers
             people={shownPeople}
             getPerson={getPerson}
             activeId={activeTagId}
+            hotId={tagging ? null : hotPersonId}
             onOpenPerson={tagging ? (id) => setActiveTagId(id) : onOpenPerson}
           />
         </div>
@@ -562,11 +572,43 @@ const MediaViewer = ({
     }
   }
 
+  // Ouvert depuis une vignette de la fiche : la carte part de la vignette et grandit jusqu'à sa place (Patch, 27/10).
+  // Avant la peinture, pour ne jamais montrer la carte à sa place une image plus tôt.
+  const cardRef = useRef(null)
+  const mediaId = media?.id
+  useLayoutEffect(() => {
+    const card = cardRef.current
+    const from = takeOrigin()
+    if (!card || !from) return
+    card.style.animation = 'none'
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+    // Sur téléphone, la fenêtre est collée en bas (pz.css, place-items: end) : on part du bord bas
+    const anchor = getComputedStyle(card.parentElement).alignItems.includes('end') ? 'bottom' : 'center'
+    const start = growFromTransform(from, card.getBoundingClientRect().width, { width: window.innerWidth, height: window.innerHeight }, anchor)
+    if (!start) return
+    card.style.transformOrigin = start.origin
+    card.animate?.([{ transform: start.transform }, { transform: 'none' }], { duration: 280, easing: 'cubic-bezier(.23, 1, .32, 1)' })
+  }, [mediaId])
+
+  // Téléphone : glisser la photo vers le bas ferme le souvenir, comme la fiche (Patch, 27/10). Pas pendant
+  // l'identification (on touche la photo pour placer un visage), ni quand la carte a défilé (on remonte d'abord).
+  const sheetMode = useSheetMode()
+  const drag = useSheetDrag({
+    enabled: sheetMode && !tagging,
+    zone: '.mv-photo-box',
+    onClose,
+    canStart: () => (cardRef.current?.scrollTop ?? 0) <= 0,
+  })
+
   if (!media) return null
 
   return (
     <div className="pz-overlay media-viewer-overlay" onClick={handleOverlayClick}>
       <div
+        ref={cardRef}
+        style={drag.style}
+        data-dragging={drag.dragging || undefined}
+        {...drag.bind}
         className={`media-viewer-card media-viewer-card--${mediaType}`}
         role="dialog"
         aria-modal="true"
@@ -646,7 +688,7 @@ const MediaViewer = ({
               </div>
             ) : (
               <div className="mv-people">
-                <MediaPeopleList people={savedPeople} getPerson={getPerson} onOpenPerson={onOpenPerson} />
+                <MediaPeopleList people={savedPeople} getPerson={getPerson} onOpenPerson={onOpenPerson} onHover={setHotPersonId} />
                 {canTag && onSavePeople && (
                   <button type="button" className="pz-btn pz-btn--soft pz-btn--sm mv-people-btn" onClick={startTagging}>
                     <UserPlus size={15} strokeWidth={2} aria-hidden="true" />

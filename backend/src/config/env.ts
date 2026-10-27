@@ -3,7 +3,10 @@ import { z } from 'zod'
 
 // dotenv 17+ écrit « injected env (N) from .env » à chaque démarrage, même sans fichier : les journaux
 // de l'API restent au format JSON de Fastify
-loadDotenv({ quiet: true })
+// backend/.env first, then the root .env that docker compose reads, so a dev API runs on the same settings
+// without a second file. The first file that sets a variable wins. Tests read only backend/.env: the root
+// one holds the production values.
+loadDotenv({ path: process.env.NODE_ENV === 'test' ? '.env' : ['.env', '../.env'], quiet: true })
 
 const DEV_DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/genealogy'
 const DEV_JWT_SECRET = 'dev-secret-change-me-please'

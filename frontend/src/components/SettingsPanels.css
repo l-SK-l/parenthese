@@ -56,6 +56,29 @@
   .ts-row-actions { justify-content: flex-start; }
 }
 
+/* Icône de l'arbre : la lettre ou un emoji */
+.ts-icons { display: flex; flex-wrap: wrap; gap: 6px; }
+.ts-icon { width: 38px; height: 38px; border-radius: 12px; border: 1px solid var(--pz-line); background: var(--pz-surface); font-size: 19px; line-height: 1; cursor: pointer; }
+.ts-icon--letter { width: auto; padding: 0 12px; border-radius: 999px; font: 500 13px var(--pz-sans); color: var(--pz-ink-2); }
+.ts-icon[aria-checked="true"] { border-color: var(--pz-a500); background: var(--pz-a50); box-shadow: 0 0 0 3px var(--pz-a100); }
+.ts-icon:focus-visible { outline: 2px solid var(--pz-a500); outline-offset: 2px; }
+
+/* Cinq onglets : ils rétrécissent (texte sur deux lignes) au lieu de déborder du panneau sur un petit téléphone */
+.ts-tabs .pz-tab { min-width: 0; }
+@media (max-width: 420px) { .ts-tabs .pz-tab { padding: 0 4px; font-size: 12.5px; line-height: 1.2; } }
+
+/* ── Gestion : propriétaire et co-gestionnaires (issue #145) ── */
+.tm-row { padding: 12px 14px; }
+.tm-who { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tm-who .ts-row-text { min-width: 0; }
+.tm-avatar { width: 34px; height: 34px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--pz-a100); color: var(--pz-a700); font: 500 13px var(--pz-sans); }
+.tm-avatar--pending { background: var(--pz-bg); color: var(--pz-muted); border: 1px dashed var(--pz-a300); }
+.tm-mail { font: 400 13px var(--pz-sans); color: var(--pz-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tm-invite { display: flex; gap: 8px; }
+.tm-invite .pz-input { flex: 1; min-width: 0; }
+.contrib-invite-link input.contrib-link-url { border: 0; outline: none; min-height: 32px; }
+@media (max-width: 480px) { .tm-invite { flex-direction: column; } }
+
 /* ── Contributions : invitation ── */
 .contrib-list-section { display: grid; gap: 18px; }
 .contrib-invite { display: grid; gap: 12px; padding: 16px; border-radius: var(--pz-r-m); background: var(--pz-a50); border: 1px solid var(--pz-a100); }
@@ -156,17 +179,18 @@
 .contrib-change-group { display: grid; gap: 6px; }
 .contrib-group-header { font: 500 11.5px var(--pz-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--pz-faint); padding-top: 4px; }
 
-.contrib-change-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 10px 12px; border: 1px solid var(--pz-line); border-radius: 12px; background: var(--pz-surface); transition: border-color 160ms ease, background-color 160ms ease; }
+.contrib-change-card { position: relative; margin-top: 8px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 14px 12px 10px; border: 1px solid var(--pz-line); border-radius: 12px; background: var(--pz-surface); transition: border-color 160ms ease, background-color 160ms ease; }
 .contrib-change-card--approved { border-color: #b9d8b2; background: var(--pz-success-bg); }
 .contrib-change-card--rejected { border-color: #f1c9c4; background: var(--pz-danger-bg); }
 .contrib-change-card--rejected .contrib-change-fields { opacity: .6; }
 .contrib-change-card-head { display: flex; align-items: center; gap: 8px; }
-.contrib-action-badge { flex: none; padding: 2px 8px; border-radius: 999px; font: 500 11.5px var(--pz-sans); background: var(--pz-line-soft); color: var(--pz-ink-2); }
-.contrib-action-badge--create { background: var(--pz-success-bg); color: var(--pz-success); }
-.contrib-action-badge--update { background: var(--pz-a100); color: var(--pz-a700); }
-.contrib-action-badge--delete { background: var(--pz-danger-bg); color: var(--pz-danger); }
+/* Étiquette à cheval sur le bord haut de la carte */
+.contrib-action-badge { position: absolute; top: -9px; left: 12px; padding: 1px 8px; border-radius: 6px; font: 500 11px/16px var(--pz-sans); letter-spacing: .01em; background: var(--pz-line-soft); color: var(--pz-ink-2); box-shadow: 0 0 0 1px var(--pz-line); }
+.contrib-action-badge--create { background: var(--pz-success-bg); color: var(--pz-success); box-shadow: 0 0 0 1px #cfe3cb; }
+.contrib-action-badge--update { background: var(--pz-a100); color: var(--pz-a700); box-shadow: 0 0 0 1px #efcdbf; }
+.contrib-action-badge--delete { background: var(--pz-danger-bg); color: var(--pz-danger); box-shadow: 0 0 0 1px #f1c9c4; }
+.contrib-action-badge--conflict { background: #fff1d6; color: #7a5600; box-shadow: 0 0 0 1px #ecd29a; }
 .contrib-change-entity-name { flex: 1; min-width: 0; font: 400 16px/1.2 var(--pz-serif); color: var(--pz-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.contrib-conflict-badge { flex: none; padding: 2px 8px; border-radius: 999px; background: #fff1d6; color: #7a5600; font: 500 11.5px var(--pz-sans); }
 .contrib-card-decisions { display: flex; gap: 4px; flex: none; }
 .contrib-decision-icon {
   width: 32px;
@@ -231,26 +255,44 @@
 .contrib-confirm-approve { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font: 500 13px var(--pz-sans); color: var(--pz-ink); }
 
 /* ── Notification après envoi d'une contribution (montée dans App.jsx) ── */
+/* Centrée par left: 50%, elle n'avait que la moitié de l'écran : sur téléphone, quatre lignes dans une pilule.
+   Sa largeur suit maintenant le texte, jusqu'à l'écran moins les marges. Pas d'animation : elle apparaît nette. */
 .contrib-success-toast {
   position: fixed;
   bottom: 92px;
   left: 50%;
   z-index: 3000;
+  width: max-content;
+  max-width: min(560px, calc(100vw - 32px));
   padding: 11px 20px;
   border-radius: 999px;
   background: var(--pz-ink);
   color: var(--pz-bg);
-  font: 500 14px var(--pz-sans);
+  font: 500 14px/1.4 var(--pz-sans);
+  text-align: center;
+  text-wrap: balance;
   box-shadow: var(--pz-shadow-lg);
   pointer-events: none;
   transform: translateX(-50%);
-  animation: contrib-toast-in 260ms var(--pz-ease) both;
 }
-@keyframes contrib-toast-in {
-  from { opacity: 0; transform: translate(-50%, 8px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
+/* Sur deux lignes, une pilule se déforme : des coins arrondis simples */
+/* Suppression annulable : le bouton Annuler doit rester cliquable */
+.undo-toast { display: flex; align-items: center; gap: 14px; padding-right: 8px; pointer-events: auto; }
+.undo-toast-btn {
+  position: relative;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pz-bg) 16%, transparent);
+  color: var(--pz-bg);
+  font: 600 14px/1.2 var(--pz-sans);
+  cursor: pointer;
 }
-@media (max-width: 768px) { .contrib-success-toast { bottom: 78px; font-size: 13px; } }
+/* Zone de clic d'au moins 44 px sans grossir le bouton */
+.undo-toast-btn::before { content: ''; position: absolute; inset: -8px; }
+.undo-toast-btn:hover { background: color-mix(in srgb, var(--pz-bg) 26%, transparent); }
+.undo-toast-btn:focus-visible { outline: 2px solid var(--pz-bg); outline-offset: 2px; }
+@media (max-width: 768px) { .contrib-success-toast { bottom: 78px; padding: 11px 16px; border-radius: 16px; font-size: 13px; } }
 
 @media (max-width: 560px) {
   .contrib-invite-link { flex-wrap: wrap; border-radius: var(--pz-r-m); padding: 10px; }
@@ -259,3 +301,4 @@
   .contrib-session-quick { justify-content: flex-end; }
   .contrib-field-label { width: 88px; }
 }
+.tm-share-btn { justify-self: start; }

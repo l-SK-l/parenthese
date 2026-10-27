@@ -2,6 +2,170 @@
 
 Notable changes to Parenthèse. Dates are in YYYY-MM-DD format.
 
+## 1.5.5 (2026-10-27)
+
+### Undo instead of confirm
+
+- Deleting a person no longer asks for confirmation. A bar with "Undo" stays for 6 seconds, and Ctrl+Z works too (#169).
+- Same for a memory and for a moment in the Life tab. Two fixes to #169 on the way: an open profile no longer closes when the deletion starts, and the tree's internal lists are up to date after an undo (#172).
+
+### Motion
+
+- Profile card: it appears at once on a computer, with no fade or blur. On a phone it still rises as a sheet in 240 ms, resists when pulled up, and has continuous corners where the browser supports `corner-shape` (#170).
+- A memory grows from its thumbnail when it opens (280 ms, transform only). The viewer now respects reduced motion (#171).
+- On a phone, dragging a memory's photo down closes it, like the profile card (#176).
+- Opening a tree for the first time, the camera starts on the start person and pulls back to the family in 1.1 s while the tree draws. After an edit or a tab change, the tree shows without animation. With reduced motion, a plain fade (#181).
+
+### Faces on photos
+
+- Face markers are hidden by default. They show on hover with a mouse, when a name is hovered in the list, in tagging mode, or after a tap on the photo. The circles are thinner (#173).
+
+### Phone
+
+- Edit mode: the family tabs move to the top so the "You suggest" bar no longer covers them. The exit button reads "Done", at the height of the "+", and the bar's own close button is gone (#175).
+- The family bar only moves aside when the profile card reaches it (#180).
+- Tap targets of at least 44 px on touch screens, with no visible change (#182).
+
+### Loading
+
+- Big trees open faster with the same placement, and the list of family tabs is computed in a worker. A 3,010-person tree is usable in 1.6 s instead of 8.7 s. Tools in `tools/layout-bench` (`layout-time.mjs`, `load-probe.mjs`) (#179).
+- Blurred previews (BlurHash) of photos and portraits while they load. Migration `20261027_001_apercus_flous` adds two optional columns, and a background task fills them for existing photos when the API starts (#177).
+- Grey blocks while loading, instead of "Loading…" or a false empty state: the Life tab of a person with no known date, and the tree's panels (#178).
+
+### Reliability
+
+- Uploads from the family no longer create duplicates on a weak connection, through an `Idempotency-Key` header (#174).
+
+### Landing
+
+- Pages are prefetched when a link is hovered (`speculationrules`). The landing CSP in `deploy/nginx.conf` gets a second script hash for it (#183).
+
+## 1.5.4 (2026-10-26)
+
+### A link per family tab (#167)
+
+- `?famille=<hinge person id>` opens the tree on that family's tab. The tab opens once the tree and its tabs are known, and again if the start person arrives later (as it does for a visitor), unless the person already picked a tab. With tabs turned off in that browser, the whole tree opens framed on the hinge person. An unknown key is ignored.
+- The page address follows the open tab. In the share panel, the link to send and the invitation message follow it too, and the title names the family ("The link to send to the Garnier family").
+- Same password and same access: the link picks the landing tab and restricts nothing.
+
+## 1.5.3 (2026-10-26)
+
+### Videos in Safari (#162)
+
+- Media files are streamed and answer byte-range requests (`Accept-Ranges: bytes`, `206` with `Content-Range`, `416` outside the file). Safari on iOS, iPadOS and macOS needs this to play a video. Before, the whole file was read into memory and sent in one block.
+
+### Accounts
+
+- A password account on an OIDC instance can link its provider identity from its account ("Also sign in with …"), through a two-minute, single-use ticket (`POST /auth/oidc/link`, then `/auth/oidc/start?link=`). The identity joins that account whatever its email, and an identity already linked to another account is never moved. This is the way to switch an instance to `PASSWORD_LOGIN=false` without locking out password accounts. `/auth/me` returns `oidcLinked` (#161).
+- Signing out, or deleting the account, now survives an API restart: closed sessions are kept in the `revoked_sessions` table until their token expires, and the API refuses to start if it can't load them. Migration `20261026_001_deconnexions` (#163).
+
+### Security
+
+- A media waiting for review is readable only by a tree admin or by the account that uploaded it. Anyone else gets the same 404 as a missing media (#160).
+- Passwords are hashed with native bcrypt (`@node-rs/bcrypt`) off the event loop. Existing hashes keep working, no migration (#160).
+- Frontend lockfile: zod 4.6.7, a dev dependency (#166).
+
+### Under the hood
+
+- Prisma 7 with the pg driver adapter. The client is generated in `backend/src/generated` and `backend/prisma.config.ts` holds the database URL for the CLI. Without Docker, Node must be ^20.19, ^22.12 or 24+, and `deploy/deploy.sh` stops early on an older Node (#164).
+- Tailwind 4 for the app and the landing, through the Vite plugin. The v3 base styles the app relied on are kept, and nothing changes on screen (#165).
+
+## 1.5.2 (2026-10-26)
+
+### Dates follow the browser's region (#152)
+
+- Dates follow the browser's regional variant of the interface language (en-US, en-AU, fr-CA…), falling back to fr-FR or en-GB. Before, English always used the British format. This covers every date and time shown in the app, e.g. `10/26/2026, 10:57 AM` in the review panel on an en-US browser.
+- Typed dates follow the region's order and separator: `06/12/1924` in en-US, `1924-06-12` in fr-CA, `12/06/1924` in France and the UK. A year-first date is read everywhere.
+- The date field also accepts a written month, in French or English: `12 juin 1924`, `1er août 1950`, `June 12, 1924`, `3 sept. 1901`. An ambiguous month (`jui`) is refused.
+
+### Names in non-Latin scripts
+
+- Initials for scripts without capital letters (Chinese, Japanese, Korean, Arabic, Hebrew…) are a single character: the family name for Chinese, Japanese and Korean, the first name for Arabic and Hebrew. Latin and Cyrillic keep two initials. This applies to profiles, suggestion cards, the first-photos panel and the tree.
+- A birth place or a nickname in a right-to-left script no longer flips the order of the line under the name.
+
+### Suggestion cards
+
+- The action label (New, Edit, Delete) sits on the top edge of the card, so the name keeps the full width and both buttons stay inside the card on a phone.
+- A change whose profile changed after the suggestion was sent shows "Needs checking" in place of "Edit". Any other action keeps its word ("Delete, needs checking").
+
+### Fixes
+
+- The quick buttons to add a parent, partner, child or sibling in a profile's Info tab are dashed chips, like "+ Nickname" in edit mode (#154).
+- The notice after adding someone or sending changes takes the width it needs on a phone, instead of four lines in a pill, and appears without animation (#156).
+- The counter of pending suggestions on the account picture is round for a single digit.
+- Backend dependencies: ip-address 10.7.4 (#144) and fast-uri (#155), for known security issues.
+
+### For self-hosters
+
+- No database change.
+
+## 1.5.1 (2026-10-25)
+
+### Suggestions show on the tree
+
+- A suggestion waiting for review now shows on the tree, where it will go: a suggested person is drawn faded, with a dotted circle and a "Suggested" tag, and their links are dotted. Words, drawings and photos placed on the tree show see-through. A person with a suggested change gets a small dot.
+- Whoever manages the tree opens a suggested person to see who suggested it and what else the suggestion holds, and accepts or rejects it right there. A person with a suggested change shows the fields in their profile, with the same buttons. "See details" opens the review panel to sort change by change.
+- The family sees what they are adding as a "Draft" before sending it, then as "Waiting" until it is reviewed. This is kept in their browser only, and cleared once the suggestion is reviewed.
+- After adding a person, the send window no longer opens by itself. The family can add several people, then send once with Send.
+
+### Photos placed on the tree by the family
+
+- A family member can now place a photo on the tree. Before, the upload was refused without a word and the photo never showed. The photo waits for review: it is kept if accepted, deleted if rejected, and an upload never sent is deleted after 7 days. At most 50 photos wait on a tree at once.
+- Accepted words, drawings and photos are now placed by the server when the suggestion is accepted. Before, the reviewer's browser placed them afterwards and could lose them, and none appeared when the family's changes apply directly.
+
+### Adding relatives from a profile
+
+- "Someone elsewhere": relatives can add a person found in public records too. It goes into their changes and the tree manager reviews it, like any other proposal. Places, the "needs checking" mark and the source link now travel with a proposed new person.
+- In a profile's Links tab, searching for a parent, child or partner who is not in the tree yet now offers "Create …", which opens the add panel already filled in.
+- Profiles have a Siblings section, with "Add a sibling".
+- The Info tab has quick buttons to add a parent, partner, child or sibling without going into edit mode first.
+- The add panel opened from a profile comes with the link already set, and suggests the family name for a child or a sibling.
+- Adding someone whose first and last name match a person already in the tree shows a warning, with a button to open that person's profile.
+
+### Fixes
+
+- The "needs checking" mark sits on the corner of the portrait, half outside, so it no longer covers the face.
+- "Update the tree" no longer clears your changes when part of them fails to save: what failed stays in your edits, with a message.
+- A suggestion already reviewed elsewhere (another tab, a co-manager) now says so, instead of a message about emails, and the tree updates.
+- After the family sends their changes, the tree reloads: a photo just sent no longer looks accepted.
+- Zooming with the mouse wheel no longer logs an error in the browser console.
+
+### For self-hosters
+
+- New table `annotation_photo_uploads` (migration `20261025_003`, additive).
+- New route `GET /trees/:id/contributions/sessions/:sessionId/status`, which returns only the status of a suggestion to someone who can read the tree.
+- Anonymous counters for editing (person added and from where, suggestion sent or reviewed, edits saved), with no content from the tree. As before, nothing is sent without `VITE_POSTHOG_KEY`.
+
+## 1.5.0 (2026-10-25)
+
+### Several managers for one tree
+
+- The owner can invite co-managers from the tree settings, in a new Managers tab. Parenthèse sends no email: the owner gets a link to pass on. The link works once, lasts 14 days, and can be cancelled. Copying it again creates a new link and the old one stops working (#145, asked by @milan616).
+- A co-manager edits the tree and reviews the family's suggestions like the owner. Only the owner invites or removes a co-manager and deletes the tree. A co-manager can leave from the Advanced tab.
+- Immich stays with the owner. Its key opens the owner's whole library, so co-managers do not see it or change it.
+- With a password account, the link is needed and the account must use the invited address. With OIDC, a co-manager whose provider marks the invited address as verified is added at sign-in, without the link. An unverified address is never matched.
+- An invitation opens an account even when `ALLOW_REGISTRATION=false`, at the invited address only.
+- Removing a co-manager takes effect on their next request, and also drops any access they had saved with the sharing password. The settings then offer to change that password, since they may have seen it.
+- Deleting your account now names the co-managers of the trees you own, which are deleted for them too.
+- In the tree menu, "Admin" is now "Co-manager".
+
+### Search for someone elsewhere
+
+- "Someone elsewhere" in the bottom-right menu opens a panel on the right of the tree: type a name, birth year and place, and search public records. Links to Gallica (old newspapers), FranceArchives (military registers), Mémoire des hommes, Léonore, Geneanet, Open Archives, WikiTree, FreeBMD and FamilySearch open in the browser with the name typed in when the site allows it.
+- The server can query deaths in France since 1970 (INSEE records via matchID) and WikiTree, once listed in `SEARCH_SOURCES`. Each source says what it covers and what is sent. The owner adds a result to a person in the tree: empty fields only, marked as needing checking, source kept in the note.
+
+### Trees
+
+- A tree can have an icon, picked from fifteen emoji in Settings > Your tree. It replaces the first letter in the tree menu, on the account page and on the invitation page.
+- For whoever manages the tree, the button at the bottom right now reads Edit, with a pencil. The family keeps Add.
+- A tree name starting with an emoji no longer shows a broken letter in the menus.
+
+### Fixes
+
+- An admin can switch a person's profile to edit mode from a new Edit button on the profile.
+- The "?" of "needs checking" shows whole on round portraits. It was cut by the frame.
+- On iPad, the tree no longer stops short of the bottom of the screen. The canvas follows its real size instead of the window height read at load.
+
 ## 1.4.0 (2026-10-23)
 
 ### Family tabs

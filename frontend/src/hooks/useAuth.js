@@ -107,12 +107,12 @@ export function useAuth() {
     }
   }
 
-  const handleRegister = async (firstName, email, password, registrationCode) => {
+  const handleRegister = async (firstName, email, password, invitationToken, registrationCode) => {
     setAccountLoading(true)
     setAccountError('')
 
     try {
-      const result = await registerUser(firstName, email, password, registrationCode)
+      const result = await registerUser(firstName, email, password, invitationToken, registrationCode)
       const mergedUser = {
         ...(result.user || {}),
         firstName: firstName || result.user?.firstName || '',

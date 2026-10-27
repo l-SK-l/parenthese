@@ -14,13 +14,13 @@ export default {
   // App.jsx: adding people and contributions
   "Ajoutez d'abord un parent à {name} pour pouvoir lui rattacher un frère ou une sœur.": '{name}: сначала добавьте родителя, чтобы можно было привязать брата или сестру.',
   "Ajoutez d'abord un parent à cette personne pour pouvoir lui rattacher un frère ou une sœur.": 'Сначала добавьте этому человеку родителя, чтобы можно было привязать брата или сестру.',
-  '{name} est dans vos modifications. Envoyez-les quand vous avez fini.': '{name} — в ваших правках. Отправьте их, когда закончите.',
+  "{name} est sur l'arbre, en brouillon. Envoyez quand vous avez fini.": "{name} — на древе, в черновике. Отправьте, когда закончите.",
   "Erreur lors de l'ajout de la personne": 'Не удалось добавить человека',
   'Aucune modification à soumettre.': 'Нет изменений для отправки.',
   'Contribution de {name} · {date}': 'Правки · {name} · {date}',
   'Contribution de la famille · {date}': 'Правки от семьи · {date}',
   "Erreur lors de l'envoi des contributions": 'Не удалось отправить правки',
-  "Merci, c'est envoyé ! Ça apparaîtra dans l'arbre une fois relu.": 'Спасибо, отправлено! Всё появится в древе после проверки.',
+  "Merci, c'est envoyé ! C'est en pointillés sur l'arbre jusqu'à la relecture.": "Спасибо, отправлено! До проверки это видно на древе пунктиром.",
 
   // App.jsx: sharing password
   'Session invalide.': 'Недействительная сессия.',

@@ -6,6 +6,7 @@ import { env } from '../config/env.js'
 import { confirmsWithPassword, hashPassword, verifyPassword } from '../lib/auth.js'
 import { isOidcEnabled } from '../lib/oidc.js'
 import { createAccountIfAllowed, isRegistrationOpen } from '../lib/registration.js'
+import { acceptInvitation, findPendingInvitationByToken } from '../lib/tree-invitations.js'
 import { signUserSession } from '../lib/user-session.js'
 import { revokeUserToken } from '../lib/token-revocation.js'
 import { deletedAccountVisitorKey } from '../lib/tree-visits.js'
@@ -28,6 +29,8 @@ const credentialsSchema = z.object({
 const registerSchema = credentialsSchema.extend({
   firstName: z.string().max(60).optional().nullable(),
   registrationCode: z.string().max(256).optional(),
+  // Lien d'invitation à co-gérer un arbre : ouvre un compte même inscription fermée, à l'adresse invitée seulement
+  invitationToken: z.string().min(1).max(200).optional(),
 })
 
 function trimmedFirstName(value: string | null | undefined): string | null {
@@ -147,17 +150,25 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(403).send({ error: 'password_login_disabled' })
       }
 
+      const email = parsed.data.email.trim().toLowerCase()
+      const invitation = parsed.data.invitationToken ? await findPendingInvitationByToken(app.prisma, parsed.data.invitationToken) : null
+      if (parsed.data.invitationToken && !invitation) {
+        return reply.code(410).send({ error: 'invitation_invalid' })
+      }
+      if (invitation && invitation.email !== email) {
+        return reply.code(403).send({ error: 'invitation_email_mismatch' })
+      }
+
       // Inscription fermée : refusée avant toute lecture, la réponse ne dit pas si l'adresse a un compte
-      if (!(await isRegistrationOpen(app.prisma))) {
+      if (!invitation && !(await isRegistrationOpen(app.prisma))) {
         return reply.code(403).send({ error: 'registration_closed' })
       }
 
-      // Checked before the email, so that without the code nobody learns which addresses have an account
-      if (!isRegistrationCodeAccepted(parsed.data.registrationCode)) {
+      // An invitation link is proof enough, like OIDC: only a plain sign-up needs REGISTRATION_CODE
+      if (!invitation && !isRegistrationCodeAccepted(parsed.data.registrationCode)) {
         return reply.code(403).send({ error: 'invalid_registration_code' })
       }
 
-      const email = parsed.data.email.trim().toLowerCase()
       const existing = await app.prisma.user.findUnique({ where: { email } })
       if (existing) {
         return reply.code(409).send({ error: 'email_already_exists' })
@@ -175,13 +186,26 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
           email: true,
           firstName: true,
         },
-      }))
+      }), { invited: Boolean(invitation) })
       // Un autre compte est né pendant le calcul du hash, sur une instance fermée
       if (!user) {
         return reply.code(403).send({ error: 'registration_closed' })
       }
 
-      return reply.code(201).send({ token: signUserSession(app, user), user: { ...user, hasPassword: true } })
+      // Compte ouvert par une invitation : co-gestionnaire de l'arbre tout de suite
+      let joinedTreeId: string | null = null
+      if (invitation) {
+        const accepted = await acceptInvitation(app.prisma, invitation.id, user.id, user.email)
+        if (accepted.ok) {
+          joinedTreeId = accepted.treeId
+        } else if (!(await isRegistrationOpen(app.prisma))) {
+          // Invitation annulée ou servie entre-temps, sur une instance fermée : pas de compte sans arbre
+          await app.prisma.user.delete({ where: { id: user.id } })
+          return reply.code(410).send({ error: 'invitation_invalid' })
+        }
+      }
+
+      return reply.code(201).send({ token: signUserSession(app, user), user: { ...user, hasPassword: true }, joinedTreeId })
     },
   )
 
@@ -248,14 +272,15 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     const user = await app.prisma.user.findUnique({
       where: { id: request.actor.userId },
-      select: { id: true, email: true, firstName: true, passwordHash: true },
+      select: { id: true, email: true, firstName: true, passwordHash: true, identities: { select: { id: true }, take: 1 } },
     })
     if (!user) {
       return reply.code(401).send({ error: 'authentication_required' })
     }
 
-    // hasPassword : l'écran de suppression demande le mot de passe, ou l'email pour un compte sans mot de passe
-    return reply.send({ user: { id: user.id, email: user.email, firstName: user.firstName, hasPassword: confirmsWithPassword(user.passwordHash) } })
+    // hasPassword : l'écran de suppression demande le mot de passe, ou l'email pour un compte sans mot de passe.
+    // oidcLinked : le compte se connecte déjà par le fournisseur ; sinon le compte propose « Relier à … »
+    return reply.send({ user: { id: user.id, email: user.email, firstName: user.firstName, hasPassword: confirmsWithPassword(user.passwordHash), oidcLinked: (user.identities?.length ?? 0) > 0 } })
   })
 
   app.get('/me/last-tree', async (request, reply) => {
@@ -444,7 +469,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       })
 
       if (payload.kind === 'user' && typeof payload.exp === 'number') {
-        revokeUserToken(payload.jti, payload.exp)
+        await revokeUserToken(app.prisma, payload.jti, payload.exp)
       }
 
       await removeTreeMediaDirectories(ownedTreeIds, request.log)
@@ -464,7 +489,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     }
 
     if (typeof payload.exp === 'number') {
-      revokeUserToken(payload.jti, payload.exp)
+      await revokeUserToken(app.prisma, payload.jti, payload.exp)
     }
 
     return reply.send({ ok: true })

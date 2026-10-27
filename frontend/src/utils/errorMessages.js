@@ -68,6 +68,22 @@ export function getAccountErrorMessage(error) {
     return t('Le format de fichier ne correspond pas au type de média choisi.')
   }
 
+  if (errorCode === 'contribution_session_already_reviewed') {
+    return t('Cette proposition a déjà été relue, peut-être par une autre personne qui gère l’arbre.')
+  }
+
+  if (errorCode === 'photo_too_large') {
+    return t('Cette photo est trop lourde. Essayez une photo plus petite.')
+  }
+
+  if (errorCode === 'too_many_pending_photos') {
+    return t("Beaucoup de photos attendent déjà la relecture sur cet arbre. Réessayez quand la personne qui le gère les aura vues.")
+  }
+
+  if (errorCode === 'invalid_annotation_photo_mime_type') {
+    return t('Ce fichier n’est pas une photo que Parenthèse sait afficher (JPEG, PNG, WebP ou GIF).')
+  }
+
   if (errorCode === 'storage_quota_exceeded') {
     return t("L'arbre n'a plus de place pour de nouveaux souvenirs. Son propriétaire peut en supprimer.")
   }
@@ -78,6 +94,14 @@ export function getAccountErrorMessage(error) {
 
   if (errorCode === 'oidc_email_unverified') {
     return t("Votre fournisseur de connexion n'indique pas que votre adresse email est vérifiée. Vérifiez-la chez lui, puis réessayez.")
+  }
+
+  if (errorCode === 'oidc_identity_taken') {
+    return t('Ce compte du fournisseur est déjà relié à un autre compte Parenthèse.')
+  }
+
+  if (errorCode === 'oidc_link_expired') {
+    return t('Le lien pour relier le compte a expiré. Recommencez depuis votre compte.')
   }
 
   if (errorCode === 'oidc_email_taken') {
@@ -98,6 +122,19 @@ export function getAccountErrorMessage(error) {
 
   if (errorCode === 'registration_closed') {
     return t("Cette instance n'accepte plus de nouveaux comptes. Demandez à la personne qui l'héberge.")
+  }
+
+  // Lien d'invitation à co-gérer un arbre (issue #145)
+  if (errorCode === 'invitation_email_mismatch') {
+    return t("Cette invitation est pour une autre adresse. Utilisez l'adresse à laquelle vous avez été invité.")
+  }
+
+  if (errorCode === 'invitation_invalid' || errorCode === 'invitation_used' || errorCode === 'invitation_expired') {
+    return t("Ce lien d'invitation ne marche plus. Demandez-en un nouveau à la personne qui vous a invité.")
+  }
+
+  if (errorCode === 'already_owner') {
+    return t('Vous êtes déjà propriétaire de cet arbre.')
   }
 
   if (errorCode === 'citation_text_required') {

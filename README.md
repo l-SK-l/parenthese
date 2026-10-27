@@ -66,7 +66,7 @@ To open the instance to your family over the Internet, put an HTTPS reverse prox
 
 So that people who come across the address can't sign up and start their own trees, set `ALLOW_REGISTRATION=false` in `.env`, then run `docker compose up -d`. Existing accounts keep signing in and creating trees, relatives still open shared trees with the link and password, and the app no longer offers to create an account. An instance with no account at all still accepts the first one, so the variable can be set before the very first start: create your own account right away, before you give out the address.
 
-To let only some people sign up, keep registration open and set `REGISTRATION_CODE` in `.env` instead (any value of 4 to 32 characters), then run `docker compose up -d`. The sign-up form then asks for that code. Relatives who open a tree with its link and password don't need an account, so they don't need the code either. The first account of an empty instance needs it too, and accounts created through an OIDC provider don't, since the provider already decides who can sign in.
+To let only some people sign up, keep registration open and set `REGISTRATION_CODE` in `.env` instead (any value of 4 to 32 characters), then run `docker compose up -d`. The sign-up form then asks for that code. Relatives who open a tree with its link and password don't need an account, so they don't need the code either. The first account of an empty instance needs it too. Accounts created through an OIDC provider or from an invitation to co-manage a tree don't, since the provider or the invitation already decides who can sign up.
 
 #### Sign in with your identity provider (OIDC)
 
@@ -84,7 +84,7 @@ OIDC_PROVIDER_NAME=Authentik                                         # shown on 
 
 The sign-in screen then shows "Sign in with Authentik". On a first sign-in, Parenthèse links the provider account to the Parenthèse account with the same email, or creates one when `ALLOW_REGISTRATION` allows it. With registration closed, the provider only signs in people who already have an account (the first account of an empty instance is still accepted). Emails are only trusted when the provider marks them verified (`email_verified`); `OIDC_REQUIRE_VERIFIED_EMAIL=false` lifts that check, for a provider that doesn't send the claim and where nobody picks their own address. Once linked, an account stays tied to the provider's user id, not to the email.
 
-`PASSWORD_LOGIN=false` removes Parenthèse passwords altogether: sign-in goes through the provider only (the API refuses to start without `OIDC_ISSUER`). Accounts created through the provider have no password; to delete one, its owner types their email instead. `OIDC_SCOPES` (default `openid email profile`) and `OIDC_APP_URL` (where the app opens after sign-in, by default the origin of `OIDC_REDIRECT_URI`) rarely need changing.
+`PASSWORD_LOGIN=false` removes Parenthèse passwords altogether: sign-in goes through the provider only (the API refuses to start without `OIDC_ISSUER`). Accounts created through the provider have no password; to delete one, its owner types their email instead. Accounts that already have a password are not linked to the provider by email: before switching, each owner opens their account and clicks « Se connecter aussi avec … » ("Also sign in with …"), then signs in with the provider once. `OIDC_SCOPES` (default `openid email profile`) and `OIDC_APP_URL` (where the app opens after sign-in, by default the origin of `OIDC_REDIRECT_URI`) rarely need changing.
 
 A self-hosted instance sends no analytics. Usage tracking on parenthese.io only turns on when a PostHog key is provided at build time, which this setup does not do.
 
@@ -161,7 +161,7 @@ npm --prefix backend run prisma:deploy
 npm --prefix backend run dev
 ```
 
-Before `prisma:deploy`, `backend/.env` must exist (a copy of `backend/.env.example`) with `DATABASE_URL="postgresql://postgres:postgres@localhost:5432/genealogy"`, matching those credentials. `docker stop parenthese-dev-db` stops the database, `docker start parenthese-dev-db` restarts it with its data.
+The API and the Prisma CLI read `backend/.env`, then the root `.env` that docker compose uses, the first file that sets a variable winning. Without `DATABASE_URL` in either, they use `postgresql://postgres:postgres@localhost:5432/genealogy`, matching those credentials, so `backend/.env` is only needed to override a setting for development (template in `backend/.env.example`). `docker stop parenthese-dev-db` stops the database, `docker start parenthese-dev-db` restarts it with its data.
 
 The API listens on [http://localhost:4000](http://localhost:4000) and answers `{ "ok": true }` on `/health`.
 

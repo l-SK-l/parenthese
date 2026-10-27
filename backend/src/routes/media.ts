@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { Prisma } from '@prisma/client'
+import { Prisma } from '../generated/prisma/client.js'
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 
@@ -16,15 +16,19 @@ import {
   removeStoredFile,
   sanitizeImage,
   scrubMp4Location,
+  sendFileWithRanges,
   sniffMimeType,
+  storedFileSize,
   type BinaryMediaType,
 } from '../lib/media-files.js'
 import { avatarCropInputSchema, readAvatarCrop, toStoredAvatarCrop } from '../lib/avatar-crop.js'
+import { computeBlurhash } from '../lib/blurhash.js'
 import { syncPersonMediaOrder } from '../lib/media-order.js'
 import { resolveTreeMediaDirectory } from '../lib/tree-purge.js'
 import { canReadTree, canReadTreeWithMediaToken } from '../lib/tree-access.js'
 import type { MembershipRole } from '../types/auth.js'
 import { ContributionRouteError, resolveSubmissionContext } from './contributions.js'
+import { forgetPendingPhoto, reservePendingPhoto, sweepStalePendingPhotos } from '../lib/annotation-changes.js'
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 const MAX_FILE_BYTES = 20 * 1024 * 1024
@@ -238,6 +242,18 @@ async function canReadMedia(app: FastifyRequest['server'], treeId: string, reque
     return true
   }
   return token ? canReadTreeWithMediaToken(app, treeId, token) : false
+}
+
+// Compte qui demande un média : celui de la session, sinon celui du jeton médias (lien de partage : aucun)
+async function mediaRequesterUserId(app: FastifyRequest['server'], request: FastifyRequest, token: string | undefined): Promise<string | null> {
+  if (request.actor?.kind === 'user') return request.actor.userId
+  if (!token) return null
+  try {
+    const payload = await app.jwt.verify<{ kind?: string; userId?: string }>(token)
+    return payload.kind === 'media' && payload.userId ? payload.userId : null
+  } catch {
+    return null
+  }
 }
 
 export const mediaRoutes: FastifyPluginAsync = async (app) => {
@@ -486,6 +502,7 @@ export const mediaRoutes: FastifyPluginAsync = async (app) => {
         status: isPending ? 'pending' : 'approved',
         contributionSessionId: contributionSession?.id ?? null,
         lifeEventId,
+        blurhash: payload.data.type === 'photo' ? await computeBlurhash(prepared.buffer) ?? '' : null,
       },
     })
 
@@ -605,6 +622,7 @@ export const mediaRoutes: FastifyPluginAsync = async (app) => {
         avatarMimeType: prepared.mimeType,
         // Nouveau portrait : le cadrage de l'ancien ne s'applique pas à celui-ci
         avatarCrop: Prisma.DbNull,
+        avatarBlurhash: await computeBlurhash(prepared.buffer) ?? '',
         updatedBy: request.actor.userId,
         // Un portrait déposé à la main remplace aussi le lien Immich : sans cela, l'association
         // survivrait invisible en base (le graphe ne publie que l'origine du portrait) et ne
@@ -661,6 +679,7 @@ export const mediaRoutes: FastifyPluginAsync = async (app) => {
         avatarPath: null,
         avatarMimeType: null,
         avatarCrop: Prisma.DbNull,
+        avatarBlurhash: null,
         // Retirer le portrait retire aussi le lien Immich : l'association ne survit pas au portrait.
         immichPersonId: null,
         updatedBy: request.actor.userId,
@@ -1078,11 +1097,23 @@ export const mediaRoutes: FastifyPluginAsync = async (app) => {
       select: {
         filePath: true,
         mimeType: true,
+        status: true,
+        uploadedBy: true,
       },
     })
 
     if (!media) {
       return reply.code(404).send({ error: 'media_not_found' })
+    }
+
+    // Un souvenir qui attend la relecture ne se lit que par qui gère l'arbre ou par qui l'a envoyé, pas par toute la
+    // famille qui connaîtrait son identifiant. Même réponse qu'un média absent : rien n'indique qu'il existe.
+    if (media.status === 'pending') {
+      const userId = await mediaRequesterUserId(app, request, query.data.token)
+      const allowed = Boolean(userId) && (media.uploadedBy === userId || Boolean(await requireAdminMembership(app, userId as string, params.data.id)))
+      if (!allowed) {
+        return reply.code(404).send({ error: 'media_not_found' })
+      }
     }
 
     // YouTube videos: filePath is the YouTube URL, redirect the browser
@@ -1096,16 +1127,13 @@ export const mediaRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_media_path' })
     }
 
-    let fileBuffer: Buffer
-    try {
-      fileBuffer = await readFile(absolutePath)
-    } catch {
+    const size = await storedFileSize(absolutePath)
+    if (size === null) {
       return reply.code(404).send({ error: 'media_file_missing' })
     }
 
     applyMediaResponseHeaders(reply, media.mimeType, path.basename(media.filePath))
-
-    return reply.send(fileBuffer)
+    return sendFileWithRanges(request, reply, absolutePath, size)
   })
 
   // ---- Annotation Photos ----
@@ -1123,8 +1151,10 @@ export const mediaRoutes: FastifyPluginAsync = async (app) => {
     photoId: z.string().min(1),
   })
 
+  // Photo posée sur l'arbre. Un gestionnaire la pose tout de suite ; la famille (lien de partage ou membre) la
+  // propose : le fichier attend la relecture, noté dans annotation_photo_uploads (lib/annotation-changes.ts).
   app.post('/trees/:id/annotation-photos', UPLOAD_RATE_LIMIT, async (request, reply) => {
-    if (!request.actor || request.actor.kind !== 'user') {
+    if (!request.actor) {
       return reply.code(401).send({ error: 'authentication_required' })
     }
 
@@ -1138,9 +1168,16 @@ export const mediaRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_payload', details: payload.error.flatten() })
     }
 
-    const membership = await requireAdminMembership(app, request.actor.userId, params.data.id)
-    if (!membership) {
-      return reply.code(403).send({ error: 'forbidden' })
+    const isManager = request.actor.kind === 'user' && Boolean(await requireAdminMembership(app, request.actor.userId, params.data.id))
+    if (!isManager) {
+      try {
+        await resolveSubmissionContext(app, request.actor, params.data.id)
+      } catch (error) {
+        if (error instanceof ContributionRouteError) return reply.code(error.statusCode).send({ error: error.code })
+        throw error
+      }
+      const stale = await sweepStalePendingPhotos(app.prisma, params.data.id)
+      await Promise.all(stale.map((filePath) => removeStoredFile(getStorageRoot(), filePath)))
     }
 
     const fileBuffer = Buffer.from(stripDataUrlPrefix(payload.data.dataBase64), 'base64')
@@ -1180,8 +1217,18 @@ export const mediaRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_photo_path' })
     }
 
-    await mkdir(path.dirname(absolutePath), { recursive: true })
-    await writeFile(absolutePath, prepared.buffer)
+    // Famille : la place est réservée sous un verrou par arbre avant d'écrire, pour tenir le plafond même quand
+    // plusieurs envois arrivent ensemble
+    if (!isManager && !(await reservePendingPhoto(app.prisma, params.data.id, photoId, relativePath))) {
+      return reply.code(429).send({ error: 'too_many_pending_photos' })
+    }
+    try {
+      await mkdir(path.dirname(absolutePath), { recursive: true })
+      await writeFile(absolutePath, prepared.buffer)
+    } catch (error) {
+      if (!isManager) await forgetPendingPhoto(app.prisma, photoId)
+      throw error
+    }
 
     return reply.code(201).send({
       photoId,

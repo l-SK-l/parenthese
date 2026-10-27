@@ -9,10 +9,18 @@ export async function loginUser(email, password) {
   return data
 }
 
-export async function registerUser(firstName, email, password, registrationCode) {
+// invitationToken : lien d'invitation à co-gérer un arbre, qui ouvre un compte même inscription fermée
+// registrationCode: REGISTRATION_CODE for a plain sign-up
+export async function registerUser(firstName, email, password, invitationToken, registrationCode) {
   const data = await apiRequest('/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ firstName, email, password, ...(registrationCode ? { registrationCode } : {}) }),
+    body: JSON.stringify({
+      firstName,
+      email,
+      password,
+      ...(invitationToken ? { invitationToken } : {}),
+      ...(registrationCode ? { registrationCode } : {}),
+    }),
   })
 
   return data
@@ -86,6 +94,22 @@ export async function fetchAuthOptions() {
 // Adresse qui part chez le fournisseur OIDC ; returnTo ramène sur l'arbre partagé ouvert (validé par l'API)
 export function oidcStartUrl(returnTo = '/') {
   return `${API_BASE_URL}/auth/oidc/start?returnTo=${encodeURIComponent(returnTo)}`
+}
+
+// Relier le fournisseur au compte connecté : un ticket de deux minutes, à usage unique, puis le départ OIDC qui le porte
+export async function requestOidcLinkTicket(token) {
+  const data = await apiRequest('/auth/oidc/link', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+  return data?.ticket
+}
+
+export function oidcLinkUrl(ticket) {
+  return `${API_BASE_URL}/auth/oidc/start?link=${encodeURIComponent(ticket)}`
 }
 
 // Jeton de passage reçu au retour du fournisseur, échangé une seule fois contre une session

@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, forwardRef } from 'react'
 import { createPortal } from 'react-dom'
-import { Save, Trash2, Plus, X, Search, Check, Play, ImagePlus, Camera, Crop, Sparkles, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Save, Trash2, Plus, X, Search, Check, Play, ImagePlus, Camera, Crop, Sparkles, ChevronLeft, ChevronRight, Pencil } from 'lucide-react'
 import { getParents, getChildren, getPersonUnions, getPersonMedias, getPersonTaggedMedias, getDemoLife, getPersonById, filiations, persons, unions } from '../data/mockData'
-import { fetchPersonLife } from '../api/treeApi.js'
+import { deleteLifeEvent, fetchPersonLife } from '../api/treeApi.js'
 import LifeTimeline from './LifeTimeline.jsx'
 import MomentSheet from './MomentSheet.jsx'
 import { fetchImmichConfig } from '../api/immichApi.js'
@@ -11,6 +11,7 @@ import ImmichFacePanel from './ImmichFacePanel.jsx'
 import './PersonCard.css'
 import PzBusy from './PzBusy.jsx'
 import { useSheetDrag, useSheetMode } from '../hooks/useSheetDrag'
+import { rememberOrigin } from '../utils/openOrigin'
 import PortraitCropModal from './PortraitCropModal.jsx'
 import { imagePlacement } from '../utils/portraitCrop.js'
 import { t, dateLocale } from '../i18n/index.js'
@@ -20,6 +21,9 @@ import { isYearOnly } from '../utils/dateInput.js'
 import DateField from './DateField.jsx'
 import { runOnce } from '../utils/saveOnLeave.js'
 import { normalizeSex, SEX_CHOICES } from '../utils/personSex.js'
+import { ProposalBanner } from './ProposalCard.jsx'
+import { initialsOf } from '../utils/initial.js'
+import { blurPlaceholder } from '../utils/blurhash.js'
 
 // Aucune modification en cours (référence stable)
 const NO_EDITS = Object.freeze({})
@@ -66,6 +70,11 @@ const PersonCard = ({
   onRemoveRelation,
   onSetParentage,
   pendingParentage = null,
+  // Modification proposée et pas encore relue (fantôme, 1.5.1) : { fields, deleted, ghost }, et sa relecture
+  proposal = null,
+  proposalReview = null,
+  // Créer un proche qui n'est pas encore dans l'arbre (1.5.1) : (type, nom tapé) ouvre l'ajout déjà rempli
+  onCreateRelative = null,
   relationActionLoading = false,
   relationActionSuccess = '',
   relationActionError = '',
@@ -73,7 +82,11 @@ const PersonCard = ({
   onMoveSibling,
   onUploadMomentFile,
   onMomentSaved,
+  // Suppression annulable (App, hooks/useUndoable.js)
+  onUndoable,
   saveOnLeaveRef = null,
+  // Administrateur, hors démo : la fiche passe en modification d'un clic, sans chercher le crayon de l'arbre
+  onQuickEdit,
 }) => {
   // Souvenirs d'abord quand il y en a, ou quand on peut en ajouter : c'est là qu'est le bouton
   const [tab, setTab] = useState(() => (getPersonMedias(person.id).length > 0 || getPersonTaggedMedias(person.id).length > 0 || canManageMedia ? 'medias' : 'infos'))
@@ -121,7 +134,6 @@ const PersonCard = ({
   const [saveError, setSaveError] = useState('')
   // Enregistrement en cours : un second appel (bouton, puis changement de fiche) reçoit la même promesse
   const saveInFlight = useRef(null)
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showImmichPanel, setShowImmichPanel] = useState(false)
   // null : connexion Immich de l'arbre inconnue, puis booléen. Le menu de source ne se propose
   // qu'à qui peut agir (owner/admin de l'arbre, comme pour toute action Immich) et seulement
@@ -148,6 +160,22 @@ const PersonCard = ({
   // Feuille du bas (téléphone) : on la ferme en la glissant par la poignée ou l'en-tête, comme la croix
   const sheetMode = useSheetMode()
   const drag = useSheetDrag({ enabled: sheetMode, zone: '.pc-grab, .pc-head, .pc-close', onClose })
+  // La barre des familles (en haut à gauche) ne s'écarte que si la fiche, posée en bas, monte jusqu'à elle
+  const cardRef = useRef(null)
+  useEffect(() => {
+    const el = cardRef.current
+    if (!el) return undefined
+    const update = () => document.body.toggleAttribute('data-fiche-haute', el.getBoundingClientRect().top < 72)
+    update()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update)
+    observer?.observe(el)
+    window.addEventListener('resize', update)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', update)
+      document.body.removeAttribute('data-fiche-haute')
+    }
+  }, [])
 
   // Reset edits quand la personne change
   useEffect(() => {
@@ -155,7 +183,6 @@ const PersonCard = ({
     setUnknownFirstName(isFirstNameUnknown(person))
     setFirstNameMissing(false)
     setLastNameMissing(false)
-    setShowDeleteConfirm(false)
     setActiveRelationSearch(null)
     setRelationSearchQuery('')
     setSaveSuccess(false)
@@ -353,8 +380,13 @@ const PersonCard = ({
       setTimeout(() => setSaveSuccess(false), 2000)
       return 'saved'
     } catch (error) {
-      // Serveur injoignable (status 0, message traduit par le client) ; sinon un texte clair, jamais un message technique
-      setSaveError(error?.status === 0 ? error.message : t("L'enregistrement a échoué. Vos modifications sont gardées, réessayez."))
+      // Serveur injoignable (status 0, message traduit par le client) ; droits retirés entre-temps (un co-gestionnaire
+      // retiré, issue #145) : réessayer ne servirait à rien ; sinon un texte clair, jamais un message technique
+      setSaveError(error?.status === 0
+        ? error.message
+        : error?.status === 403
+          ? t("Vous ne pouvez plus modifier cet arbre. Rechargez la page pour voir vos droits actuels.")
+          : t("L'enregistrement a échoué. Vos modifications sont gardées, réessayez."))
       return 'blocked'
     } finally {
       setSaving(false)
@@ -379,7 +411,6 @@ const PersonCard = ({
   const handleDelete = () => {
     if (!onDelete) return
     onDelete(person.id)
-    setShowDeleteConfirm(false)
   }
 
   const handleAvatarFileChange = async (event) => {
@@ -534,7 +565,7 @@ const PersonCard = ({
   const renderMediaIcon = (media) => {
     if (media.type === 'photo') {
       return media.url
-        ? <img src={media.url} alt="" />
+        ? <img src={media.url} alt="" {...blurPlaceholder(media.blurhash)} />
         : <span>&#128247;</span>
     }
 
@@ -589,31 +620,33 @@ const PersonCard = ({
   const visualMedias = personMedias.filter((m) => m.type === 'photo' || m.type === 'video')
   const otherMedias = personMedias.filter((m) => !['citation', 'audio', 'photo', 'video'].includes(m.type) || (m.type === 'citation' && m !== quoteMedia))
 
-  const initials = `${person.firstName?.[0] || ''}${person.lastName?.[0] || ''}` || '?'
+  const initials = initialsOf(person)
   const lifeLine = (() => {
     const born = person.birthYear || (person.birthDate ? String(person.birthDate).slice(0, 4) : '')
     const died = person.deathYear || (person.deathDate ? String(person.deathDate).slice(0, 4) : '')
     const parts = []
-    if (born) parts.push(`${born}${person.birthPlace ? `, ${formatPlace(person.birthPlace)}` : ''}`)
+    // <bdi> : un lieu en arabe ou en hébreu ne retourne pas l'ordre de la ligne (« 1980, الدار البيضاء · 46 ans »)
+    if (born) parts.push(person.birthPlace ? <>{born}, <bdi>{formatPlace(person.birthPlace)}</bdi></> : born)
     if (!person.isAlive) parts.push(died || '?')
-    return parts.join(' – ')
+    return parts.length ? parts.reduce((line, part) => <>{line} – {part}</>) : null
   })()
   const ageLabel = age === null ? null : person.isAlive ? t('{age} ans', { age }) : t('{age} ans au décès', { age })
   // Une seule ligne sous le nom : surnom, repères de vie, âge, séparés par un point médian
   const metaItems = [
-    person.nickname && { key: 'nick', node: <em className="pc-nick">{person.nickname}</em>, nowrap: true },
+    person.nickname && { key: 'nick', node: <em className="pc-nick"><bdi>{person.nickname}</bdi></em>, nowrap: true },
     lifeLine && { key: 'life', node: lifeLine },
     ageLabel && { key: 'age', node: ageLabel, nowrap: true },
   ].filter(Boolean)
 
-  const renderRelationRow = (target, relationType, meta) => (
+  // removable : un frère ou une sœur passe par ses parents, il ne se retire pas d'ici
+  const renderRelationRow = (target, relationType, meta, removable = true) => (
     <div key={`${relationType}-${target?.id}`} className="pc-rel-row">
       <span className="pc-rel-avatar" aria-hidden="true">
         {target?.photo ? <img src={target.photo} alt="" /> : <span>{target?.firstName?.[0] || '?'}</span>}
       </span>
       <span className="pc-rel-name">{target ? fullNameLabel(target) : ''}</span>
       {meta && <span className="pc-rel-meta">{meta}</span>}
-      <button
+      {removable && <button
         type="button"
         className="pz-btn pz-btn--ghost pz-btn--icon pc-rel-remove"
         aria-label={t('Retirer {name}', { name: target ? fullNameLabel(target) : '' })}
@@ -621,7 +654,7 @@ const PersonCard = ({
         disabled={relationActionLoading}
       >
         <X size={15} strokeWidth={2} />
-      </button>
+      </button>}
     </div>
   )
 
@@ -635,6 +668,9 @@ const PersonCard = ({
         onSelect={(p) => handleRelationAdd(p, relationType)}
         onClose={() => { setActiveRelationSearch(null); setRelationSearchQuery('') }}
         placeholder={placeholder}
+        // La recherche ne trouvait que les personnes déjà dans l'arbre : sans résultat, on s'arrêtait là
+        onCreate={onCreateRelative ? (query) => { setActiveRelationSearch(null); setRelationSearchQuery(''); onCreateRelative(relationType, query) } : null}
+        createLabel={relationType === 'parent' ? t('comme parent') : relationType === 'child' ? t('comme enfant') : t('comme conjoint·e')}
       />
     ) : (
       <button type="button" className="pc-rel-add" onClick={() => setActiveRelationSearch(relationType)} disabled={relationActionLoading}>
@@ -646,6 +682,7 @@ const PersonCard = ({
 
   return (
     <div
+      ref={cardRef}
       className={`person-card ${editMode ? 'person-card--edit-mode' : ''}`}
       role="dialog"
       aria-label={t('Fiche de {name}', { name: fullNameLabel(person) })}
@@ -672,9 +709,10 @@ const PersonCard = ({
             />
           )}
           {/* Hors modification, le portrait se regarde : la photo s'ajoute ou se change en mode modification */}
-          <div className="pc-photo">
+          {/* Aperçu flou du portrait sur le cadre pendant le chargement (le recadrage s'applique à l'image) */}
+          <div className="pc-photo" style={person.photo ? blurPlaceholder(person.avatarBlurhash).style : undefined}>
             {person.photo
-              ? <img src={person.photo} alt={fullNameLabel(person)} onLoad={(event) => setPhotoSize({ w: event.currentTarget.naturalWidth, h: event.currentTarget.naturalHeight })} style={photoStyle} />
+              ? <img src={person.photo} alt={fullNameLabel(person)} onLoad={(event) => { event.currentTarget.parentElement.style.backgroundImage = 'none'; setPhotoSize({ w: event.currentTarget.naturalWidth, h: event.currentTarget.naturalHeight }) }} style={photoStyle} />
               : <span className="pc-photo-initials">{initials}</span>}
           </div>
           {editMode && onAvatarUpload && (
@@ -754,6 +792,12 @@ const PersonCard = ({
             )}
             {!editMode && person.toVerify && <span className="pz-tag pz-tag--accent pz-tag--dot">{t('À vérifier')}</span>}
             {!editMode && person.profession && <span className="pz-tag">{person.profession}</span>}
+            {!editMode && onQuickEdit && (
+              <button type="button" className="pc-quick-edit" onClick={() => { setTab('infos'); onQuickEdit() }}>
+                <Pencil size={13} strokeWidth={2} aria-hidden="true" />
+                {t('Modifier')}
+              </button>
+            )}
           </div>
         </div>
         {editMode && ((unknownFirstName || !String(getEditValue('firstName', person.firstName) ?? '').trim())) && (
@@ -772,6 +816,7 @@ const PersonCard = ({
           </label>
         )}
       </header>
+      {!editMode && proposal && <ProposalBanner patch={proposal} review={proposalReview} />}
 
       {avatarActionError && <div className="pz-error pc-inline-msg">{avatarActionError}</div>}
 
@@ -826,11 +871,11 @@ const PersonCard = ({
                     key={media.id}
                     type="button"
                     className={`pc-tile pc-tile--${media.type}`}
-                    onClick={() => onMediaSelect?.(media, person)}
+                    onClick={(e) => { rememberOrigin(e.currentTarget); onMediaSelect?.(media, person) }}
                     title={media.label || TYPE_LABELS[media.type]}
                   >
                     {media.type === 'photo' && media.url
-                      ? <img src={media.url} alt={media.label || ''} loading="lazy" />
+                      ? <img src={media.url} alt={media.label || ''} loading="lazy" {...blurPlaceholder(media.blurhash)} />
                       : <span className="pc-tile-video"><Play size={18} fill="currentColor" strokeWidth={0} /></span>}
                     {media.label && <span className="pc-tile-label">{media.label}</span>}
                   </button>
@@ -854,11 +899,11 @@ const PersonCard = ({
                         key={media.id}
                         type="button"
                         className={`pc-tile pc-tile--${media.type}`}
-                        onClick={() => owner && onMediaSelect?.(media, owner)}
+                        onClick={(e) => { if (!owner) return; rememberOrigin(e.currentTarget); onMediaSelect?.(media, owner) }}
                         title={media.label || TYPE_LABELS[media.type]}
                       >
                         {media.type === 'photo' && media.url
-                          ? <img src={media.url} alt={media.label || ''} loading="lazy" />
+                          ? <img src={media.url} alt={media.label || ''} loading="lazy" {...blurPlaceholder(media.blurhash)} />
                           : <span className="pc-tile-video"><Play size={18} fill="currentColor" strokeWidth={0} /></span>}
                         {media.label && <span className="pc-tile-label">{media.label}</span>}
                       </button>
@@ -1028,6 +1073,19 @@ const PersonCard = ({
               </section>
             )}
 
+            {/* Ajouter un proche sans passer par « Modifier » puis l'onglet Relations (1.5.1) */}
+            {!editMode && onCreateRelative && (
+              // Les mêmes pastilles que « + Surnom », « + Métier » en modification (Patch, 26/10)
+              <div className="pc-fill-chips pc-quick-add" role="group" aria-label={t('Ajouter un proche')}>
+                <button type="button" className="pc-fill-chip" onClick={() => onCreateRelative('parent', '')}>+ {t('Parent')}</button>
+                <button type="button" className="pc-fill-chip" onClick={() => onCreateRelative('spouse', '')}>+ {t('Conjoint·e')}</button>
+                <button type="button" className="pc-fill-chip" onClick={() => onCreateRelative('child', '')}>+ {t('Enfant')}</button>
+                {parentsList.length > 0 && (
+                  <button type="button" className="pc-fill-chip" onClick={() => onCreateRelative('sibling', '')}>+ {t('Frère ou sœur')}</button>
+                )}
+              </div>
+            )}
+
             {(editMode ? notesShown : person.note) && (
               <section className="pc-section" data-pc-field="note">
                 <h3 className="pz-eyebrow">{t('Notes')}</h3>
@@ -1089,6 +1147,24 @@ const PersonCard = ({
               {childrenList.length > 0 ? childrenList.map(c => renderRelationRow(c, 'child', adoptedChildLabel(c))) : <p className="pc-rel-empty">{t('Aucun enfant')}</p>}
               {renderRelationAdd('child', t('Ajouter un enfant'), t('Rechercher un enfant'))}
             </section>
+
+            {onCreateRelative && (
+              <section className="pc-section">
+                <h3 className="pz-eyebrow">{t('Frères et sœurs')}</h3>
+                {siblingsList.length > 0
+                  ? siblingsList.map(c => renderRelationRow(c, 'sibling', null, false))
+                  : <p className="pc-rel-empty">{t('Aucun frère ni sœur')}</p>}
+                {/* Un frère ou une sœur reçoit les mêmes parents : sans parent, on le dit avant d'ouvrir l'ajout */}
+                {parentsList.length > 0 ? (
+                  <button type="button" className="pc-rel-add" onClick={() => onCreateRelative('sibling', '')}>
+                    <Plus size={15} strokeWidth={2} />
+                    {t('Ajouter un frère ou une sœur')}
+                  </button>
+                ) : (
+                  <p className="pc-rel-empty">{t("Ajoutez d'abord un parent pour lui rattacher un frère ou une sœur.")}</p>
+                )}
+              </section>
+            )}
           </div>
         )}
       </div>
@@ -1097,32 +1173,20 @@ const PersonCard = ({
       {editMode && saveError && <p className="pc-save-error" role="alert">{saveError}</p>}
       {editMode && (
         <footer className="pc-foot">
-          {showDeleteConfirm ? (
-            <div className="pc-delete-confirm">
-              <span>{t("Supprimer {name} de l'arbre ?", { name: firstNameLabel(person) })}</span>
-              <div className="pc-delete-actions">
-                <button type="button" className="pz-btn pz-btn--ghost pz-btn--sm" onClick={() => setShowDeleteConfirm(false)}>{t('Annuler')}</button>
-                <button type="button" className="pz-btn pz-btn--danger pz-btn--sm" onClick={handleDelete}>{t('Supprimer')}</button>
-              </div>
-            </div>
-          ) : (
-            <>
-              {isAdmin && (
-                <button type="button" className="pz-btn pz-btn--danger-ghost pz-btn--sm" onClick={() => setShowDeleteConfirm(true)}>
-                  <Trash2 size={15} strokeWidth={2} />
-                  {t('Supprimer')}
-                </button>
-              )}
-              <button
-                type="button"
-                className={`pz-btn pz-btn--primary pc-save ${saveSuccess ? 'is-saved' : ''}`}
-                disabled={(!hasChanges && !saveSuccess) || saving}
-                onClick={handleSave}
-              >
-                {saveSuccess ? (<><Check size={16} strokeWidth={2.5} />{t('Enregistré')}</>) : (<PzBusy busy={saving} busyLabel={t('Enregistrement en cours')}><Save size={16} strokeWidth={2} />{t('Enregistrer')}</PzBusy>)}
-              </button>
-            </>
+          {isAdmin && (
+            <button type="button" className="pz-btn pz-btn--danger-ghost pz-btn--sm" onClick={handleDelete}>
+              <Trash2 size={15} strokeWidth={2} />
+              {t('Supprimer')}
+            </button>
           )}
+          <button
+            type="button"
+            className={`pz-btn pz-btn--primary pc-save ${saveSuccess ? 'is-saved' : ''}`}
+            disabled={(!hasChanges && !saveSuccess) || saving}
+            onClick={handleSave}
+          >
+            {saveSuccess ? (<><Check size={16} strokeWidth={2.5} />{t('Enregistré')}</>) : (<PzBusy busy={saving} busyLabel={t('Enregistrement en cours')}><Save size={16} strokeWidth={2} />{t('Enregistrer')}</PzBusy>)}
+          </button>
         </footer>
       )}
 
@@ -1209,6 +1273,24 @@ const PersonCard = ({
           isAdmin={canEditMoments}
           onUploadFile={onUploadMomentFile}
           onClose={() => setMomentSheet(null)}
+          onDelete={onUndoable && treeId && immichToken ? (event) => {
+            // Le moment quitte la frise tout de suite ; la requête part à la fin du délai d'annulation
+            setMomentSheet(null)
+            setLifeState((prev) => (prev.data?.events ? { ...prev, data: { ...prev.data, events: prev.data.events.filter((e) => e.id !== event.id) } } : prev))
+            onUndoable({
+              message: t('Le moment est supprimé.'),
+              commit: async ({ keepalive = false } = {}) => {
+                try {
+                  await deleteLifeEvent(treeId, event.id, immichToken, { keepalive })
+                } catch {
+                  if (keepalive) return
+                  setLifeRevision((r) => r + 1)
+                  setLifeNotice(t('La suppression n’a pas abouti. Réessayez dans un instant.'))
+                }
+              },
+              undo: () => setLifeRevision((r) => r + 1),
+            })
+          } : undefined}
           onSaved={({ pending, uploaded }) => {
             setMomentSheet(null)
             if (pending) setLifeNotice(t('Merci, c’est envoyé. Le moment apparaîtra dans sa vie quand la personne qui gère l’arbre l’aura accepté.'))
@@ -1226,7 +1308,7 @@ const PersonCard = ({
  * Recherche en ligne pour ajouter un lien (parent, conjoint·e, enfant)
  */
 const RelationSearchInline = forwardRef(function RelationSearchInline(
-  { query, onQueryChange, results, onSelect, onClose, placeholder },
+  { query, onQueryChange, results, onSelect, onClose, placeholder, onCreate = null, createLabel = '' },
   ref
 ) {
   const filtered = results.slice(0, 6)
@@ -1268,9 +1350,15 @@ const RelationSearchInline = forwardRef(function RelationSearchInline(
             </li>
           ))}
         </ul>
-      ) : query ? (
+      ) : query && !onCreate ? (
         <p className="pc-rel-empty">{t('Aucune personne ne correspond')}</p>
       ) : null}
+      {onCreate && query.trim() && (
+        <button type="button" className="pc-search-item pc-search-create" onClick={() => onCreate(query.trim())}>
+          <span className="pc-rel-avatar" aria-hidden="true"><Plus size={14} strokeWidth={2.2} /></span>
+          <span className="pc-rel-name">{t('Créer « {name} »', { name: query.trim() })} <em>{createLabel}</em></span>
+        </button>
+      )}
     </div>
   )
 })

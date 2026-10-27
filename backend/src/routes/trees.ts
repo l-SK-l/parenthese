@@ -1,7 +1,7 @@
 import path from 'node:path'
 
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
-import { Prisma } from '@prisma/client'
+import { Prisma } from '../generated/prisma/client.js'
 import { z } from 'zod'
 
 import { env } from '../config/env.js'
@@ -40,6 +40,8 @@ const patchTreeSchema = z
     slug: z.string().min(1).max(128).optional(),
     description: z.string().max(500).optional().nullable(),
     rootPersonId: z.string().min(1).optional().nullable(),
+    // Un emoji (graphème composé compris), ou null pour revenir à la première lettre
+    icon: z.string().trim().max(16).regex(/^\p{Extended_Pictographic}/u).optional().nullable(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: 'at_least_one_field_required',
@@ -392,6 +394,7 @@ export const treeRoutes: FastifyPluginAsync = async (app) => {
               slug: true,
               name: true,
               description: true,
+              icon: true,
               rootPersonId: true,
               createdAt: true,
               updatedAt: true,
@@ -413,6 +416,7 @@ export const treeRoutes: FastifyPluginAsync = async (app) => {
               slug: true,
               name: true,
               description: true,
+              icon: true,
               rootPersonId: true,
               createdAt: true,
               updatedAt: true,
@@ -442,13 +446,24 @@ export const treeRoutes: FastifyPluginAsync = async (app) => {
       slug: string
       name: string
       description: string | null
+      icon: string | null
       rootPersonId: string | null
       createdAt: Date
       updatedAt: Date
       role: string
       accessMode: 'member' | 'share'
       lastAccessedAt: Date | null
+      coManagers?: string[]
     }> = []
+
+    // Co-gestionnaires des arbres possédés : l'écran de suppression du compte les nomme (l'arbre part avec le compte)
+    const ownedIds = memberships.filter((m: { role: string }) => m.role === 'owner').map((m: { tree: { id: string } }) => m.tree.id)
+    const coManagerRows = ownedIds.length
+      ? await app.prisma.treeMembership.findMany({
+          where: { treeId: { in: ownedIds }, role: 'admin' },
+          select: { treeId: true, user: { select: { firstName: true, email: true } } },
+        })
+      : []
 
     for (const membership of memberships) {
       mergedTrees.push({
@@ -456,6 +471,11 @@ export const treeRoutes: FastifyPluginAsync = async (app) => {
         role: membership.role,
         accessMode: 'member',
         lastAccessedAt: null,
+        ...(membership.role === 'owner' ? {
+          coManagers: coManagerRows
+            .filter((row: { treeId: string }) => row.treeId === membership.tree.id)
+            .map((row: { user: { firstName: string | null; email: string } }) => row.user.firstName || row.user.email),
+        } : {}),
       })
     }
 
@@ -650,6 +670,7 @@ export const treeRoutes: FastifyPluginAsync = async (app) => {
         name?: string
         slug?: string
         description?: string | null
+        icon?: string | null
         rootPersonId?: string | null
       } = {}
 
@@ -676,6 +697,10 @@ export const treeRoutes: FastifyPluginAsync = async (app) => {
 
       if (payload.data.description !== undefined) {
         updateData.description = payload.data.description
+      }
+
+      if (payload.data.icon !== undefined) {
+        updateData.icon = payload.data.icon
       }
 
       if (payload.data.rootPersonId !== undefined) {

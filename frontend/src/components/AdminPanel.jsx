@@ -19,9 +19,12 @@ import {
 } from '../api/immichApi.js'
 import PzBusy from './PzBusy.jsx'
 import TreeVisitsSection from './TreeVisitsSection.jsx'
+import TreeManagersSection from './TreeManagersSection.jsx'
+import { removeManager } from '../api/managersApi.js'
 import { t } from '../i18n/index.js'
 import { readGedcomFile } from '../utils/gedcomText.js'
 import { readGedcomBundle, zipErrorMessage } from '../utils/gedcomBundle.js'
+import Skeleton from './Skeleton.jsx'
 
 function normalizeSlug(value) {
   return String(value || '')
@@ -32,6 +35,9 @@ function normalizeSlug(value) {
     .replace(/^-+|-+$/g, '')
 }
 
+// Icônes proposées pour un arbre (Patch, 25/10)
+const TREE_ICONS = ['🌳', '🌿', '🌻', '🏡', '❤️', '🧡', '⭐', '📖', '🕊️', '🌊', '⛰️', '🍂', '🌸', '🐚', '☀️']
+
 const AdminPanel = ({
   familyTabs = true,
   onFamilyTabsChange = null,
@@ -39,8 +45,15 @@ const AdminPanel = ({
   treeId,
   authToken,
   isAdmin = false,
+  // Propriétaire : supprime l'arbre et gère les co-gestionnaires. Un co-gestionnaire peut seulement quitter.
+  isOwner = false,
+  currentUserId = null,
+  oidcName = '',
   onClose,
   onTreeDeleted,
+  onLeftTree,
+  onOpenShare,
+  onTreeUpdated,
   onGedcomImported,
   onOpenPhotoStart,
 }) => {
@@ -53,11 +66,13 @@ const AdminPanel = ({
   const [tree, setTree] = useState(null)
   const [treeName, setTreeName] = useState('')
   const [treeDescription, setTreeDescription] = useState('')
+  const [treeIcon, setTreeIcon] = useState(null)
   // Contributions de la famille : 'pending' = validées par l'admin, 'direct' = appliquées immédiatement
   const [contributionPolicy, setContributionPolicy] = useState('pending')
   const [savingPolicy, setSavingPolicy] = useState(false)
 
   const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [confirmLeave, setConfirmLeave] = useState(false)
   const [deleteConfirmName, setDeleteConfirmName] = useState('')
   const [gedcomFile, setGedcomFile] = useState(null)
   const [importingGedcom, setImportingGedcom] = useState(false)
@@ -123,6 +138,7 @@ const AdminPanel = ({
         setTree(loadedTree)
         setTreeName(loadedTree?.name || '')
         setTreeDescription(loadedTree?.description || '')
+        setTreeIcon(loadedTree?.icon || null)
       })
       .catch(() => {
         if (!active) return
@@ -177,6 +193,7 @@ const AdminPanel = ({
       const payload = {
         name: nextName,
         description: treeDescription.trim() || null,
+        icon: treeIcon,
       }
 
       const normalized = normalizeSlug(nextName)
@@ -194,7 +211,9 @@ const AdminPanel = ({
       setTree(updated)
       setTreeName(updated?.name || nextName)
       setTreeDescription(updated?.description || '')
+      setTreeIcon(updated?.icon || null)
       setSuccessMessage(t('Modifications enregistrées.'))
+      onTreeUpdated?.(updated)
     } catch {
       setErrorMessage(t("Impossible d'enregistrer les modifications."))
     } finally {
@@ -299,6 +318,22 @@ const AdminPanel = ({
     }
   }
 
+  // Co-gestionnaire qui quitte : l'arbre disparaît de ses arbres, comme supprimé pour lui
+  const handleLeave = async () => {
+    if (!treeId || !authToken || saving || !currentUserId) return
+    setSaving(true)
+    setErrorMessage('')
+    try {
+      await removeManager(treeId, currentUserId, authToken)
+      onLeftTree?.(treeId)
+      onClose?.()
+    } catch {
+      setErrorMessage(t('Impossible de quitter la gestion de cet arbre.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   // ── Connexion Immich de l'arbre ──────────────────────────────────────────────
 
   const testImmichConnection = async () => {
@@ -398,8 +433,9 @@ const AdminPanel = ({
           <X size={18} aria-hidden="true" />
         </button>
 
-        <div className="pz-tabs" role="tablist">
+        <div className="pz-tabs ts-tabs" role="tablist">
           <button type="button" role="tab" aria-selected={section === 'tree'} className="pz-tab" onClick={() => setSection('tree')}>{t('Votre arbre')}</button>
+          <button type="button" role="tab" aria-selected={section === 'managers'} className="pz-tab" onClick={() => setSection('managers')}>{t('Gestion')}</button>
           <button type="button" role="tab" aria-selected={section === 'visits'} className="pz-tab" onClick={() => setSection('visits')}>{t('Visites')}</button>
           <button type="button" role="tab" aria-selected={section === 'data'} className="pz-tab" onClick={() => setSection('data')}>{t('Données')}</button>
           <button type="button" role="tab" aria-selected={section === 'danger'} className="pz-tab" onClick={() => setSection('danger')}>{t('Avancé')}</button>
@@ -407,13 +443,14 @@ const AdminPanel = ({
 
         <div className="ts-content">
           {loading ? (
-            <p className="pz-small ts-loading">{t('Chargement…')}</p>
+            <Skeleton variant="lines" count={4} />
           ) : (
             <>
               {errorMessage && <div className="pz-error" role="alert">{errorMessage}</div>}
               {successMessage && <div className="pz-success" role="status">{successMessage}</div>}
 
               {section === 'visits' && <TreeVisitsSection treeId={treeId} authToken={authToken} />}
+              {section === 'managers' && <TreeManagersSection treeId={treeId} authToken={authToken} currentUserId={currentUserId} oidcName={oidcName} onOpenShare={onOpenShare} />}
 
               {section === 'tree' && (
                 <form className="ts-panel" onSubmit={handleSaveTree}>
@@ -427,6 +464,22 @@ const AdminPanel = ({
                       onChange={(event) => setTreeName(event.target.value)}
                       required
                     />
+                  </div>
+
+                  {/* Icône de l'arbre : un emoji à la place de la première lettre dans les menus et sur la page d'invitation */}
+                  <div className="pz-field">
+                    <span className="pz-label" id="settingsTreeIconLabel">{t("Icône de l'arbre")}</span>
+                    <div className="ts-icons" role="radiogroup" aria-labelledby="settingsTreeIconLabel">
+                      <button type="button" role="radio" aria-checked={!treeIcon} className="ts-icon ts-icon--letter" onClick={() => setTreeIcon(null)}>
+                        {t('Première lettre')}
+                      </button>
+                      {TREE_ICONS.map((icon) => (
+                        <button key={icon} type="button" role="radio" aria-checked={treeIcon === icon} className="ts-icon" onClick={() => setTreeIcon(icon)}>
+                          {icon}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="pz-hint">{t("Elle remplace la première lettre dans vos menus et sur la page d'invitation.")}</p>
                   </div>
 
                   <div className="pz-field">
@@ -649,7 +702,28 @@ const AdminPanel = ({
                 </div>
               )}
 
-              {section === 'danger' && (
+              {section === 'danger' && !isOwner && (
+                <div className="ts-panel">
+                  <div className="ts-danger">
+                    <div className="ts-row-text">
+                      <strong>{t('Quitter la gestion de cet arbre')}</strong>
+                      <p className="pz-small">{t('Vous ne pourrez plus le modifier. Seul son propriétaire peut le supprimer.')}</p>
+                    </div>
+                    {confirmLeave ? (
+                      <div className="ts-row-actions">
+                        <button type="button" className="contrib-confirm-no" onClick={() => setConfirmLeave(false)}>{t('Rester')}</button>
+                        <button type="button" className="pz-btn pz-btn--danger pz-btn--sm" onClick={handleLeave} disabled={saving}>
+                          <PzBusy busy={saving} busyLabel={t('En cours')}>{t('Quitter')}</PzBusy>
+                        </button>
+                      </div>
+                    ) : (
+                      <button type="button" className="pz-btn pz-btn--danger-ghost pz-btn--sm" onClick={() => setConfirmLeave(true)}>{t('Quitter')}</button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {section === 'danger' && isOwner && (
                 <div className="ts-panel">
                   <div className="ts-danger">
                     <div className="ts-row-text">

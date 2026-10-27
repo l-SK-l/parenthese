@@ -1,9 +1,10 @@
 import { memo, useEffect, useImperativeHandle, useRef, useState, useCallback } from 'react'
 import { getPersonMedias, getParents, getChildren, getPersonUnions, persons as graphPersons, unions as graphUnions, filiations as graphFiliations } from '../data/mockData'
-import { PERSON_R, FLOAT_SPEED, FLOAT_AMPLITUDE, REPULSION_RADIUS, REPULSION_STRENGTH, MAX_ORBIT_MEDIAS, ENTRANCE_GEN_DELAY, ENTRANCE_NODE_DURATION, ENTRANCE_NODE_STAGGER, ENTRANCE_MAX_GEN_SPAN, ENTRANCE_MAX_NODE_SPAN, ENTRANCE_LINE_DELAY, ENTRANCE_LINE_DURATION, ENTRANCE_ORBIT_DELAY, ENTRANCE_ORBIT_DURATION, ENTRANCE_ORBIT_STAGGER } from './galaxy/constants'
+import { PERSON_R, FLOAT_SPEED, FLOAT_AMPLITUDE, REPULSION_RADIUS, REPULSION_STRENGTH, MAX_ORBIT_MEDIAS, ENTRANCE_NODE_DURATION, ENTRANCE_CAMERA_DURATION, ENTRANCE_CAMERA_FROM_SCALE, ENTRANCE_REDUCED_DURATION, ENTRANCE_LINE_DELAY, ENTRANCE_LINE_DURATION, ENTRANCE_ORBIT_DELAY, ENTRANCE_ORBIT_DURATION, ENTRANCE_ORBIT_STAGGER } from './galaxy/constants'
 import { easeOutCubic } from './galaxy/utils'
-import { computeLayout, generateNodeRandomData, coupleBarMeta } from './galaxy/elkLayout'
-import { computeBlockLayout, familyTabsOf, lineToFamily, subgraphOf } from './galaxy/blockLayout'
+import { computeLayout, generateNodeRandomData, coupleBarMeta, restoreCoupleBarMeta } from './galaxy/elkLayout'
+import { computeBlockLayout, familyTabsOf, lineToFamily, subgraphOf, takeRootLayout } from './galaxy/blockLayout'
+import { hasGhosts, withGhosts } from '../utils/ghosts'
 
 // Placement par blocs familiaux par défaut (mesures : tools/layout-bench). ?layout=sugiyama = placement Sugiyama.
 const USE_BLOCK_LAYOUT = typeof window === 'undefined' || new URLSearchParams(window.location.search).get('layout') !== 'sugiyama'
@@ -31,7 +32,8 @@ const MAX_SCALE = 3.2
 // Carte des familles : l'arbre s'efface entre ces deux échelles, les tuiles de familles apparaissent
 // Ouverture sur la personne de départ quand l'arbre entier serait illisible
 const FOCUS_MIN_READABLE_SCALE = 0.5
-const FOCUS_SCALE = 0.95
+// Assez loin pour voir la famille autour, assez près pour lire les prénoms (LOD_LABEL_FADE_IN)
+const FOCUS_SCALE = 0.5
 
 // Réordonner une fratrie : seuil avant de soulever à la souris, appui long au doigt
 const REORDER_MOUSE_THRESHOLD = 4
@@ -41,9 +43,11 @@ const REORDER_LONG_PRESS_MS = 320
 const SHIFT_SPRING = { stiffness: 560, dampingRatio: 0.92 }
 const DROP_SPRING = { stiffness: 480, dampingRatio: 0.72 }
 const centerX = (node) => node.x + node.width / 2
+// Recul de la caméra à l'ouverture : départ immédiat, long freinage (ease-out quint)
+const easeOutQuint = (t) => 1 - (1 - t) ** 5
 const prefersReducedMotion = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
-const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlightIds = [], graphRevision = 0, annotationHandlers = null, transformReadRef = null, zoomApiRef = null, focusPersonId = null, assetRevision = 0, reorderEnabled = false, onReorderSiblings = null, familyTabs = true, annotationViewRef = null, onAnnotationsAnchored = null, selfPersonId = null }) => {
+const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlightIds = [], graphRevision = 0, annotationHandlers = null, transformReadRef = null, zoomApiRef = null, focusPersonId = null, assetRevision = 0, reorderEnabled = false, onReorderSiblings = null, familyTabs = true, annotationViewRef = null, onAnnotationsAnchored = null, selfPersonId = null, ghosts = null, initialFamilyKey = null, onFamilyChange = null }) => {
   const canvasRef = useRef(null)
   const layoutDataRef = useRef(null)
   // Onglets de familles (réglage `familyTabs`) : la liste des familles de l'arbre, calculée une fois par
@@ -52,14 +56,40 @@ const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlig
   const [tabs, setTabs] = useState([])
   const [activeKey, setActiveKey] = useState(focusPersonId != null ? String(focusPersonId) : null)
   const tabsCacheRef = useRef({ rev: -1, start: undefined, tabs: [] })
+  // Liste des onglets calculée dans un worker (galaxy/familyTabsWorker.js) quand l'arbre affiché est celui de la
+  // famille de départ : il ne dépend pas de cette liste, il s'affiche tout de suite et la barre suit. Une demande
+  // en cours est abandonnée (worker arrêté) dès qu'une autre part ou qu'on calcule la liste sur place.
+  const tabsRequestRef = useRef(null) // { rev, start, worker }
+  const cancelTabsRequest = useCallback(() => {
+    tabsRequestRef.current?.worker.terminate()
+    tabsRequestRef.current = null
+  }, [])
+  useEffect(() => cancelTabsRequest, [cancelTabsRequest])
   const pendingFocusRef = useRef(null) // personne cherchée dans un autre onglet, visée après le changement
+  // Lien d'un onglet (?famille=<charnière>) : ouvert dès que l'arbre et ses onglets sont connus, et de nouveau si
+  // la personne de départ arrive après (visiteur), tant qu'on n'a pas soi-même changé d'onglet
+  const linkFamilyRef = useRef(initialFamilyKey != null ? String(initialFamilyKey) : null)
+  const pendingFamilyRef = useRef(initialFamilyKey != null ? String(initialFamilyKey) : null)
+  // Famille du lien sans onglet dans ce navigateur (onglets coupés) : l'arbre entier s'ouvre sur sa charnière
+  const frameOnRef = useRef(null)
+  const onFamilyChangeRef = useRef(onFamilyChange)
+  useEffect(() => { onFamilyChangeRef.current = onFamilyChange }, [onFamilyChange])
   const activeTabRef = useRef(null)
   const familyTabsRef = useRef(familyTabs)
   useEffect(() => { familyTabsRef.current = familyTabs }, [familyTabs])
+  // Propositions pas encore relues (utils/ghosts.js) : placées et dessinées en transparence, jamais dans les données
+  const ghostsRef = useRef(ghosts)
+  useEffect(() => { ghostsRef.current = ghosts; needsRedrawRef.current = true }, [ghosts])
   const onAnnotationsAnchoredRef = useRef(onAnnotationsAnchored)
   useEffect(() => { onAnnotationsAnchoredRef.current = onAnnotationsAnchored }, [onAnnotationsAnchored])
   const startRefRef = useRef(focusPersonId)
-  useEffect(() => { startRefRef.current = focusPersonId; setActiveKey(focusPersonId != null ? String(focusPersonId) : null) }, [focusPersonId])
+  useEffect(() => {
+    startRefRef.current = focusPersonId
+    if (linkFamilyRef.current != null) pendingFamilyRef.current = linkFamilyRef.current
+    setActiveKey(focusPersonId != null ? String(focusPersonId) : null)
+  }, [focusPersonId])
+  // Onglet choisi par la personne (barre, badge, recherche) : le lien d'arrivée ne s'impose plus
+  const chooseTab = useCallback((key) => { linkFamilyRef.current = null; pendingFamilyRef.current = null; frameOnRef.current = null; setActiveKey(key) }, [])
   // Lu au calcul du cadrage et par le réordonnancement : la référence de l'arbre affiché
   const focusPersonIdRef = useRef(focusPersonId)
   // La barre défile quand les onglets débordent : l'onglet ouvert se met en vue (sans animation) et les bords
@@ -79,7 +109,7 @@ const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlig
     return () => window.removeEventListener('resize', updateTabsEdges)
   }, [activeKey, tabs, updateTabsEdges])
   // Clic sur un badge : l'onglet de cette famille (ou, depuis un onglet, celui d'où l'on vient)
-  const openFamily = useCallback((tabKey) => { if (tabKey != null) setActiveKey(String(tabKey)) }, [])
+  const openFamily = useCallback((tabKey) => { if (tabKey != null) chooseTab(String(tabKey)) }, [chooseTab])
   // Propriétaire : un portrait vide survolé montre « + photo »
   const [layoutReady, setLayoutReady] = useState(false)
   const transformRef = useRef({ x: 0, y: 0, scale: 1 })
@@ -98,6 +128,9 @@ const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlig
   const mediaHoverState = useRef(new Map())
   const dragLiftProgress = useRef(0)
   const entranceRef = useRef(null)
+  // Arbre déjà ouvert dans cette page (sa première personne) : l'entrée ne se joue qu'à la première ouverture,
+  // un arbre modifié ou un autre onglet s'affiche net
+  const openedTreeRef = useRef(null)
   const selectedPersonIdRef = useRef(null)
   const selectedGlowScales = useRef(new Map())
   const searchGlowScales = useRef(new Map())
@@ -216,7 +249,8 @@ const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlig
   // Placement complet pour un ordre de la fratrie, recalé sur la source (les parents ne bougent pas)
   const layoutForOrder = useCallback((group, order, base) => {
     const tab = activeTabRef.current
-    const src = tab?.personIds ? subgraphOf(tab.personIds) : { persons: graphPersons, unions: graphUnions, filiations: graphFiliations }
+    const tabSrc = tab?.personIds ? subgraphOf(tab.personIds) : null
+    const src = withGhosts(tabSrc || { persons: graphPersons, unions: graphUnions, filiations: graphFiliations }, ghostsRef.current, !tabSrc)
     const graph = {
       persons: src.persons,
       unions: src.unions,
@@ -413,7 +447,7 @@ const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlig
         const id = String(personId)
         const all = tabsCacheRef.current.tabs
         const home = all.find((tb) => tb.personIds?.has(id) && !(tb.hinges || []).map(String).includes(id)) || all.find((tb) => tb.personIds?.has(id)) || all[0]
-        if (home && home.key !== activeTabRef.current?.key) { pendingFocusRef.current = id; setActiveKey(home.key) }
+        if (home && home.key !== activeTabRef.current?.key) { pendingFocusRef.current = id; chooseTab(home.key) }
         return
       }
       if (!canvas || !node) return
@@ -447,25 +481,77 @@ const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlig
     }
   }, [isZooming, targetTransformRef, zoomTimeoutRef])
 
-  // Resize canvas to device pixel ratio
+  // Resize canvas to device pixel ratio. Le CSS donne au canvas toute la page (.galaxy-canvas) ; on lit sa taille
+  // réelle. Avec window.innerHeight, Safari sur iPad gardait une hauteur prise clavier ou barre ouverte, sans
+  // événement resize ensuite : l'arbre s'arrêtait net au-dessus du bas de l'écran.
   useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return undefined
     const resize = () => {
-      const canvas = canvasRef.current
-      if (!canvas) return
-      const cssW = window.innerWidth
-      const cssH = window.innerHeight
+      const cssW = canvas.clientWidth || window.innerWidth
+      const cssH = canvas.clientHeight || window.innerHeight
       const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      const w = Math.floor(cssW * dpr), h = Math.floor(cssH * dpr)
+      if (canvas.width === w && canvas.height === h && dprRef.current === dpr) return
       dprRef.current = dpr
-      canvas.width = Math.floor(cssW * dpr)
-      canvas.height = Math.floor(cssH * dpr)
-      canvas.style.width = `${cssW}px`
-      canvas.style.height = `${cssH}px`
+      canvas.width = w
+      canvas.height = h
       needsRedrawRef.current = true
     }
     resize()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resize)
+    observer?.observe(canvas)
     window.addEventListener('resize', resize)
-    return () => window.removeEventListener('resize', resize)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', resize)
+    }
   }, [])
+
+  // Liste arrivée : l'arbre affiché (famille de départ) ne change pas, ses pastilles prennent le nom et le compte de
+  // l'onglet où elles mènent
+  const applyTabs = useCallback((req, list) => {
+    if (tabsRequestRef.current !== req) return
+    tabsRequestRef.current = null
+    tabsCacheRef.current = { rev: req.rev, start: req.start, tabs: list }
+    setTabs(list)
+    for (const n of layoutDataRef.current?.children || []) {
+      const target = n._familyTab && list.find((tb) => tb.key === n._familyTab.tabKey)
+      if (target) n._familyTab = { ...n._familyTab, label: target.label, count: target.count }
+    }
+    needsRedrawRef.current = true
+  }, [])
+
+  // Lance le calcul de la liste dans un worker ; faux si le navigateur ne le permet pas (on calcule alors sur place)
+  const requestTabs = useCallback((rev, start, referenceId) => {
+    cancelTabsRequest()
+    if (typeof Worker === 'undefined') return false
+    let worker
+    try {
+      worker = new Worker(new URL('./galaxy/familyTabsWorker.js', import.meta.url), { type: 'module' })
+      worker.postMessage({ graph: { persons: graphPersons, unions: graphUnions, filiations: graphFiliations }, referenceId })
+    } catch {
+      worker?.terminate()
+      return false
+    }
+    const req = { rev, start, worker }
+    tabsRequestRef.current = req
+    // Échec du worker : la liste est calculée sur place, sans toucher aux couples de l'arbre affiché
+    const fallback = () => {
+      if (tabsRequestRef.current !== req) return
+      const meta = coupleBarMeta
+      const list = familyTabsOf(null, referenceId)
+      restoreCoupleBarMeta(meta)
+      applyTabs(req, list)
+    }
+    worker.onmessage = ({ data }) => {
+      worker.terminate()
+      if (data.error) fallback()
+      else applyTabs(req, data.tabs)
+    }
+    worker.onerror = () => { worker.terminate(); fallback() }
+    return true
+  }, [cancelTabsRequest, applyTabs])
 
   // Layout
   useEffect(() => {
@@ -473,24 +559,55 @@ const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlig
     // avant l'arbre affiché, parce que chaque calcul de placement remplit les couples du module (coupleBarMeta)
     const start = startRefRef.current != null ? String(startRefRef.current) : null
     const cache = tabsCacheRef.current
+    let freshTabs = null
+    // Liste en attente du worker : l'arbre affiché est celui de la famille de départ
+    let tabsPending = false
     if (USE_BLOCK_LAYOUT && familyTabs && (cache.rev !== graphRevision || cache.start !== start)) {
-      tabsCacheRef.current = { rev: graphRevision, start, tabs: familyTabsOf(null, startRefRef.current) }
-      setTabs(tabsCacheRef.current.tabs)
+      const pending = tabsRequestRef.current
+      // Dans un onglet d'une autre famille, ou à l'arrivée par le lien d'un onglet, l'arbre affiché dépend de la
+      // liste : elle est calculée sur place
+      const inOtherTab = Boolean(cache.tabs.find((tb) => tb.key === activeKey)?.personIds)
+      if (!inOtherTab && pendingFamilyRef.current == null) {
+        tabsPending = (pending && pending.rev === graphRevision && pending.start === start) || requestTabs(graphRevision, start, startRefRef.current)
+      }
+      if (!tabsPending) {
+        cancelTabsRequest()
+        freshTabs = familyTabsOf(null, startRefRef.current)
+        tabsCacheRef.current = { rev: graphRevision, start, tabs: freshTabs }
+        setTabs(freshTabs)
+      }
     }
-    if (!familyTabs && tabsCacheRef.current.tabs.length) { tabsCacheRef.current = { rev: -1, start: undefined, tabs: [] }; setTabs([]) }
-    const tab = familyTabs ? (tabsCacheRef.current.tabs.find((tb) => tb.key === activeKey) || tabsCacheRef.current.tabs[0] || null) : null
+    if (!familyTabs) {
+      cancelTabsRequest()
+      if (tabsCacheRef.current.tabs.length) { tabsCacheRef.current = { rev: -1, start: undefined, tabs: [] }; setTabs([]) }
+    }
+    // La famille du lien : son onglet s'il existe dans ce navigateur, sinon l'arbre entier ouvert sur sa charnière
+    if (pendingFamilyRef.current != null && graphPersons.length) {
+      const key = pendingFamilyRef.current
+      pendingFamilyRef.current = null
+      if (familyTabs && tabsCacheRef.current.tabs.some((tb) => tb.key === key)) {
+        frameOnRef.current = null
+        if (key !== activeKey) { setActiveKey(key); return }
+      } else frameOnRef.current = key
+    }
+    const tab = familyTabs && !tabsPending ? (tabsCacheRef.current.tabs.find((tb) => tb.key === activeKey) || tabsCacheRef.current.tabs[0] || null) : null
     activeTabRef.current = tab
     // La personne de départ (ou la charnière de l'onglet) sert de référence aux rangées
     focusPersonIdRef.current = tab ? tab.referenceId : startRefRef.current
     // Dans l'onglet d'une autre famille, la personne commune (« C'est moi », sinon la personne de départ) reste
     // là, reliée par sa ligne directe (Patch, 21/10 : « je veux me voir tout le temps »)
     const line = tab?.personIds ? lineToFamily(selfPersonId ?? startRefRef.current ?? tabsCacheRef.current.tabs[0]?.resolvedRef, tab.personIds) : new Set()
-    const graph = tab?.personIds ? subgraphOf(new Set([...tab.personIds, ...line])) : null
+    const tabGraph = tab?.personIds ? subgraphOf(new Set([...tab.personIds, ...line])) : null
+    const graph = hasGhosts(ghosts)
+      ? withGhosts(tabGraph || { persons: graphPersons, unions: graphUnions, filiations: graphFiliations }, ghosts, !tabGraph)
+      : tabGraph
     // Annotations d'avant l'ancrage (x, y seuls) : rattachées une fois à la personne la plus proche dans le
     // placement de l'onglet de départ, puis enregistrées. Calculé avant l'arbre affiché (coupleBarMeta, voir plus haut)
     const legacy = annotationData.some((a) => !readAnchor(a))
     const departure = legacy && USE_BLOCK_LAYOUT && graph ? computeBlockLayout(null, startRefRef.current, { familyTabs }) : null
-    const result = USE_BLOCK_LAYOUT ? computeBlockLayout(graph, focusPersonIdRef.current, { familyTabs }) : computeLayout(null, focusPersonIdRef.current)
+    // Famille de départ sans propositions : son placement vient d'être calculé avec la liste des onglets
+    const kept = USE_BLOCK_LAYOUT && !graph && tab === freshTabs?.[0] ? takeRootLayout(freshTabs, focusPersonIdRef.current) : null
+    const result = kept || (USE_BLOCK_LAYOUT ? computeBlockLayout(graph, focusPersonIdRef.current, { familyTabs }) : computeLayout(null, focusPersonIdRef.current))
     if (legacy) {
       const anchored = anchorLegacy(annotationData, layoutCenters(departure || result))
       for (const ann of anchored) updateAnnotationInStore(ann.id, { style: ann.style })
@@ -539,7 +656,7 @@ const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlig
 
     // Grand arbre : vu en entier, les portraits deviennent des pastilles illisibles.
     // On ouvre sur la personne de départ, à une taille où l'on reconnaît les visages.
-    const focusId = focusPersonIdRef.current
+    const focusId = frameOnRef.current ?? focusPersonIdRef.current
     const personNodes = result.children.filter((n) => n._type === 'person')
     let focusNode = focusId != null
       ? personNodes.find((n) => String(n._data?.id) === String(focusId))
@@ -567,32 +684,50 @@ const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlig
     targetTransformRef.current = init
     nodeRandomDataRef.current = generateNodeRandomData(result.children, result.edges)
 
-    // Construire le schedule d'animation d'entrée
-    const genGroups = new Map()
-    result.children.forEach(node => {
-      const gen = node._generation ?? 0
-      if (!genGroups.has(gen)) genGroups.set(gen, [])
-      genGroups.get(gen).push(node)
-    })
-    genGroups.forEach(group => group.sort((a, b) => a.x - b.x))
-
+    // Entrée, à la première ouverture de l'arbre seulement. La caméra part serrée sur la personne de départ et
+    // recule jusqu'à la vue d'arrivée ; chaque personne apparaît quand elle entre dans le champ, la personne de
+    // départ dès la première image. On reprend la main à tout moment (le recul s'arrête au premier geste).
+    // Mouvements réduits : pas de recul, un fondu court. Ensuite (modification, autre onglet) : rien ne s'anime.
     const nodeSchedule = new Map()
     const coupleSchedule = new Map()
     const edgeSchedule = new Map()
     const orbitSchedule = new Map()
     let maxEndMs = 0
-
-    // Délais réduits sur les grands arbres pour que l'entrée reste courte (voir constants.js)
-    const genDelay = Math.min(ENTRANCE_GEN_DELAY, ENTRANCE_MAX_GEN_SPAN / Math.max(1, genGroups.size - 1))
-    genGroups.forEach((nodes, gen) => {
-      const genStart = gen * genDelay
-      const nodeStagger = Math.min(ENTRANCE_NODE_STAGGER, ENTRANCE_MAX_NODE_SPAN / Math.max(1, nodes.length - 1))
-      nodes.forEach((node, idx) => {
-        const startMs = genStart + idx * nodeStagger + Math.random() * 40
-        nodeSchedule.set(node.id, { startMs, duration: ENTRANCE_NODE_DURATION })
+    let camera = null
+    const treeKey = String(graphPersons[0]?.id ?? '')
+    const firstOpen = treeKey !== '' && openedTreeRef.current !== treeKey
+    if (treeKey) openedTreeRef.current = treeKey
+    if (!firstOpen) {
+      for (const n of result.children) nodeSchedule.set(n.id, { startMs: -Infinity, duration: 1 })
+    } else if (prefersReducedMotion() || !focusNode) {
+      for (const n of result.children) nodeSchedule.set(n.id, { startMs: 0, duration: ENTRANCE_REDUCED_DURATION })
+      maxEndMs = ENTRANCE_REDUCED_DURATION
+    } else {
+      const fx = focusNode.x + focusNode.width / 2, fy = focusNode.y + focusNode.height / 2
+      const sx = fx * init.scale + init.x, sy = fy * init.scale + init.y
+      const at = (sc) => ({ scale: sc, x: sx - fx * sc, y: sy - fy * sc })
+      camera = { from: at(Math.min(MAX_SCALE, Math.max(ENTRANCE_CAMERA_FROM_SCALE, init.scale * 1.6))), to: init, durationMs: ENTRANCE_CAMERA_DURATION }
+      camera.last = camera.from
+      // Instant où le recul fait entrer la personne dans le champ (marge de 40 px), ou null si elle reste dehors
+      const entersAt = (n) => {
+        const nx = n.x + n.width / 2 - fx, ny = n.y + n.height / 2 - fy
+        for (let i = 0; i <= 60; i++) {
+          const sc = camera.from.scale + (init.scale - camera.from.scale) * easeOutQuint(i / 60)
+          const px = sx + nx * sc, py = sy + ny * sc
+          if (px > -40 && px < cssW + 40 && py > -40 && py < cssH + 40) return (i / 60) * camera.durationMs
+        }
+        return null
+      }
+      for (const n of result.children) {
+        const t = n === focusNode ? 0 : entersAt(n)
+        if (t == null) { nodeSchedule.set(n.id, { startMs: -Infinity, duration: 1 }); continue }
+        const startMs = t === 0 ? 0 : Math.max(0, t - 120) + Math.random() * 40
+        nodeSchedule.set(n.id, { startMs, duration: ENTRANCE_NODE_DURATION })
         maxEndMs = Math.max(maxEndMs, startMs + ENTRANCE_NODE_DURATION)
-      })
-    })
+      }
+      transformRef.current = camera.from
+      targetTransformRef.current = camera.from
+    }
 
     coupleBarMeta.forEach(({ elkId, p1Key, p2Key }) => {
       const s1 = nodeSchedule.get(p1Key)
@@ -630,6 +765,7 @@ const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlig
     })
 
     entranceRef.current = {
+      camera,
       startTime: -1,
       nodeSchedule, coupleSchedule, edgeSchedule, orbitSchedule,
       totalDurationMs: maxEndMs,
@@ -646,7 +782,14 @@ const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlig
       pendingFocusRef.current = null
       requestAnimationFrame(() => zoomApiRef?.current?.focusPerson?.(id))
     }
-  }, [graphRevision, activeKey, familyTabs, selfPersonId])
+  }, [graphRevision, activeKey, familyTabs, selfPersonId, ghosts, requestTabs, cancelTabsRequest])
+
+  // Onglet ouvert, remonté pour l'adresse de la page et le lien de partage ; null pour la famille de départ
+  useEffect(() => {
+    if (pendingFamilyRef.current != null) return
+    const open = familyTabs && tabs.length > 1 ? tabs.find((tb) => tb.key === activeKey) : null
+    onFamilyChangeRef.current?.(open && open !== tabs[0] ? { key: open.key, label: open.label } : null)
+  }, [activeKey, tabs, familyTabs])
 
   // Sync selectedPersonId
   useEffect(() => {
@@ -690,6 +833,24 @@ const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlig
       // Pendant l'entrée et le fondu des annotations qui la suit, on redessine chaque frame
       if (entrance && elapsed < entrance.totalDurationMs + 500) dirty = true
 
+      // Recul de la caméra à l'ouverture, abandonné dès qu'on déplace ou zoome soi-même l'arbre
+      const cam = entrance?.camera
+      if (cam) {
+        if (targetTransformRef.current !== cam.last) entrance.camera = null
+        else {
+          const k = easeOutQuint(Math.min(1, Math.max(0, elapsed / cam.durationMs)))
+          const t = {
+            scale: cam.from.scale + (cam.to.scale - cam.from.scale) * k,
+            x: cam.from.x + (cam.to.x - cam.from.x) * k,
+            y: cam.from.y + (cam.to.y - cam.from.y) * k,
+          }
+          transformRef.current = t
+          targetTransformRef.current = t
+          cam.last = t
+          dirty = true
+          if (k >= 1) entrance.camera = null
+        }
+      }
       // Lissage du transform
       const target = targetTransformRef.current
       const prev = transformRef.current
@@ -922,6 +1083,7 @@ const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlig
         entrance, entranceActive, elapsed,
         view,
         liftScales: liftScalesRef.current,
+        ghostPatches: ghostsRef.current?.patches || null,
       })
       drawRenvoiPills(ctx)
       // Annotations dessinées APRES les noeuds pour que stickers/texte soient au-dessus.
@@ -942,7 +1104,11 @@ const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlig
       if (entranceAlpha > 0) {
         drawAnnotations(
           ctx,
-          editingId ? anchoredAnnotations.filter((a) => a.id !== editingId) : anchoredAnnotations,
+          [
+            ...(editingId ? anchoredAnnotations.filter((a) => a.id !== editingId) : anchoredAnnotations),
+            // Annotations proposées : dessinées, jamais touchables (hors de `shown`)
+            ...placeAnnotations(ghostsRef.current?.annotations || [], annotationCenters),
+          ],
           annotationHandlers?.selectedAnnotationId ?? null,
           annotationHandlers?.drawingPathRef?.current ?? null,
           stickerPreview,
@@ -1094,7 +1260,7 @@ const Galaxy = ({ onPersonSelect, onMediaSelect, selectedPersonId, searchHighlig
               type="button"
               className={`family-tab${active ? ' is-active' : ''}`}
               aria-current={active ? 'page' : undefined}
-              onClick={() => setActiveKey(tb.key)}
+              onClick={() => chooseTab(tb.key)}
             >
               <span className="family-tab-name">{tb.label ? tr('Famille {name}', { name: tb.label }) : tr('Famille')}</span>
               <span className="family-tab-count">{tb.count}</span>
